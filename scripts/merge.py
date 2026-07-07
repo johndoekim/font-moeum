@@ -116,8 +116,8 @@ def main(argv=None) -> int:
         prog="merge.py",
         description="영문 TTF(A) + 한글 TTF(B)를 하나의 TTF로 병합한다.",
     )
-    parser.add_argument("font_a", type=Path, help="폰트 A (영문)")
-    parser.add_argument("font_b", type=Path, help="폰트 B (한글)")
+    parser.add_argument("font_a", type=Path, help="폰트 A — 우선. 겹치는 글리프를 가짐 (보통 영문)")
+    parser.add_argument("font_b", type=Path, help="폰트 B — 보충. A에 없는 글리프 담당 (보통 한글)")
     parser.add_argument("--name", default="MoeumMerged",
                         help="출력 폰트 패밀리 이름 (기본: %(default)s)")
     parser.add_argument("--base", choices=["A", "B"], default="A",

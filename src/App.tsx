@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
 import { DEFAULT_SAMPLE, FONT_SAMPLES, FontSample } from "./samples";
 import "./App.css";
 
@@ -67,12 +68,25 @@ interface LoadedFont {
   fileName: string;
 }
 
+/** 병합 결과 캐시 항목 — 같은 (A업로드, B업로드, 이름) 조합은 재병합 없이 복원 */
+interface MergedEntry {
+  seqA: number;
+  seqB: number;
+  family: string;
+  face: FontFace;
+  bytes: ArrayBuffer;
+}
+
 type SlotId = "a" | "b";
 
+// 병합 규칙은 언어가 아니라 "우선순위 + 커버리지": 겹치는 글리프는 A가 이기고,
+// B는 A에 없는 나머지 전부를 채운다. 영문→A, 한글→B는 대표 사용례일 뿐.
 const SLOT_INFO: Record<SlotId, { title: string; desc: string }> = {
-  a: { title: "A · 영문 폰트", desc: "라틴 · 숫자 · 문장부호 우선" },
-  b: { title: "B · 한글 폰트", desc: "한글 글리프 담당" },
+  a: { title: "A · 우선 폰트", desc: "겹치는 글리프는 A가 이김 · 보통 영문" },
+  b: { title: "B · 보충 폰트", desc: "A에 없는 글리프 전부 담당 · 보통 한글" },
 };
+
+const DEFAULT_NAME = "MoeumMerged";
 
 function FontSlot({
   slot,
@@ -143,15 +157,28 @@ function App() {
   const [merged, setMerged] = useState<LoadedFont | null>(null);
   const [merging, setMerging] = useState(false);
   const [mergeError, setMergeError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [outName, setOutName] = useState(DEFAULT_NAME);
   const [sample, setSample] = useState<FontSample>(DEFAULT_SAMPLE);
   const [fontSize, setFontSize] = useState(16);
   const [lineHeight, setLineHeight] = useState(1.6);
   const [cursor, setCursor] = useState({ ln: 1, col: 1 });
   // 슬롯별로 이전 face를 지우고, 패밀리 이름에 시퀀스를 붙여 캐시 충돌 방지.
   const facesRef = useRef<Record<SlotId, FontFace | null>>({ a: null, b: null });
-  const mergedFaceRef = useRef<FontFace | null>(null);
   const faceSeqRef = useRef(0);
+  // 캐시 키 재료: 슬롯에 어떤 업로드(고유 번호)가 들어있는지. 스왑하면 번호도 스왑.
+  const uploadCounterRef = useRef(0);
+  const slotSeqRef = useRef<Record<SlotId, number>>({ a: 0, b: 0 });
+  const mergeCacheRef = useRef<Map<string, MergedEntry>>(new Map());
+  const noticeTimerRef = useRef<number | undefined>(undefined);
   const previewRef = useRef<HTMLDivElement>(null);
+
+  // 일시적 안내 — 몇 초 뒤 사라지고 기본 상태 표시(라틴 우선 폰트 등)로 돌아간다
+  function flashNotice(msg: string) {
+    setNotice(msg);
+    window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = window.setTimeout(() => setNotice(null), 5000);
+  }
 
   // 커서 위치(Ln/Col) 추적 + 현재 줄 하이라이트 — contentEditable은 React가
   // 자식을 다시 그리면 편집 내용이 깨지므로 클래스는 DOM에 직접 토글한다.
@@ -192,12 +219,10 @@ function App() {
   }, []);
 
   function clearMerged() {
-    if (mergedFaceRef.current) {
-      document.fonts.delete(mergedFaceRef.current);
-      mergedFaceRef.current = null;
-    }
+    // 캐시가 face를 소유하므로 여기서 document.fonts에서 지우지 않는다
     setMerged(null);
     setMergeError(null);
+    setNotice(null);
   }
 
   async function loadFontFile(slot: SlotId, file: File) {
@@ -216,34 +241,97 @@ function App() {
       facesRef.current[slot] = face;
       setFonts((prevFonts) => ({ ...prevFonts, [slot]: { family, fileName: file.name } }));
       setErrors((prevErrors) => ({ ...prevErrors, [slot]: null }));
-      // 슬롯이 바뀌면 기존 병합 결과는 무효
       clearMerged();
       // 병합용으로 Rust에 바이트 업로드 (웹뷰는 파일 경로를 모르므로)
       await invoke("upload_font", new Uint8Array(buffer), { headers: { slot } });
+      // 교체된 업로드를 쓰던 캐시 항목은 무효화 + face 정리
+      const replacedSeq = slotSeqRef.current[slot];
+      slotSeqRef.current[slot] = ++uploadCounterRef.current;
+      for (const [key, entry] of mergeCacheRef.current) {
+        if (entry.seqA === replacedSeq || entry.seqB === replacedSeq) {
+          document.fonts.delete(entry.face);
+          mergeCacheRef.current.delete(key);
+        }
+      }
     } catch (e) {
       setErrors((prev) => ({ ...prev, [slot]: `로드 실패: ${String(e)}` }));
     }
   }
 
   async function mergeFonts() {
-    setMerging(true);
+    const name = outName.trim() || DEFAULT_NAME;
+    const key = `${slotSeqRef.current.a}|${slotSeqRef.current.b}|${name}`;
     setMergeError(null);
+    setNotice(null);
+
+    // 4b. 같은 조합은 재병합 없이 즉시 복원 (스왑 왕복 대응)
+    const cached = mergeCacheRef.current.get(key);
+    if (cached) {
+      try {
+        await invoke("set_merged", new Uint8Array(cached.bytes)); // export 대상 동기화
+        setMerged({ family: cached.family, fileName: name });
+        flashNotice("현재 A/B 조합은 이미 병합돼 있어 캐시에서 복원 — 결과 동일, 재계산 생략");
+      } catch (e) {
+        setMergeError(String(e));
+      }
+      return;
+    }
+
+    setMerging(true);
     try {
-      const data = await invoke<ArrayBuffer>("merge_fonts", {
-        name: "MoeumMerged",
-        base: "A",
-      });
+      const data = await invoke<ArrayBuffer>("merge_fonts", { name, base: "A" });
       const family = `merged-${++faceSeqRef.current}`;
       const face = new FontFace(family, data);
       await face.load();
-      if (mergedFaceRef.current) document.fonts.delete(mergedFaceRef.current);
       document.fonts.add(face);
-      mergedFaceRef.current = face;
-      setMerged({ family, fileName: "MoeumMerged" });
+      mergeCacheRef.current.set(key, {
+        seqA: slotSeqRef.current.a,
+        seqB: slotSeqRef.current.b,
+        family,
+        face,
+        bytes: data,
+      });
+      setMerged({ family, fileName: name });
     } catch (e) {
       setMergeError(String(e));
     } finally {
       setMerging(false);
+    }
+  }
+
+  // 4a. A/B 스왑 — 파일·face·업로드 번호를 통째로 맞바꾸고, 병합돼 있었다면 자동 재병합
+  async function swapSlots() {
+    if (merging) return;
+    const wasMerged = merged !== null && fonts.a !== null && fonts.b !== null;
+    // Rust 쪽 스왑이 성공한 뒤에만 프론트를 뒤집는다 — 실패 시 양쪽 A/B가 어긋나면
+    // 이후 병합이 조용히 반대 조합으로 나간다
+    try {
+      await invoke("swap_fonts");
+    } catch (e) {
+      setMergeError(String(e));
+      return;
+    }
+    setFonts((p) => ({ a: p.b, b: p.a }));
+    setErrors((p) => ({ a: p.b, b: p.a }));
+    facesRef.current = { a: facesRef.current.b, b: facesRef.current.a };
+    slotSeqRef.current = { a: slotSeqRef.current.b, b: slotSeqRef.current.a };
+    clearMerged();
+    if (wasMerged) await mergeFonts();
+  }
+
+  // 4d. 병합 결과 TTF로 저장
+  async function exportMerged() {
+    try {
+      const base = (merged?.fileName ?? outName).trim() || DEFAULT_NAME;
+      const path = await save({
+        defaultPath: `${base}.ttf`,
+        filters: [{ name: "TrueType Font", extensions: ["ttf"] }],
+      });
+      if (!path) return;
+      await invoke("export_merged", { path });
+      flashNotice(`저장됨: ${path}`);
+    } catch (e) {
+      setMergeError(String(e));
     }
   }
 
@@ -256,17 +344,25 @@ function App() {
   const previewFamily = merged ? `"${merged.family}"` : familyStack || undefined;
 
   const canMerge = fonts.a !== null && fonts.b !== null && !merging;
+  const canSwap = !merging && (fonts.a !== null || fonts.b !== null);
   const statusText = mergeError
     ? mergeError
     : merging
       ? "병합 중… 첫 병합은 몇 초 걸립니다"
-      : merged
-        ? "병합 폰트 미리보기 중 (실제 병합 결과)"
-        : fonts.a && fonts.b
-          ? "A 라틴 + B 한글 조합 미리보기 중 (CSS 폴백 근사)"
-          : fonts.a || fonts.b
-            ? "폰트 1개 적용 중 — 나머지 슬롯도 채워보세요"
-            : "A(영문)·B(한글) TTF를 올리면 함께 미리보기됩니다";
+      : notice
+        ? notice
+        : merged
+          ? `병합 미리보기 — ${merged.fileName} · 라틴 우선: ${fonts.a?.fileName ?? "A 슬롯"}`
+          : fonts.a && fonts.b
+            ? "A 우선 + B 보충 조합 미리보기 중 (CSS 폴백 근사)"
+            : fonts.a || fonts.b
+              ? "폰트 1개 적용 중 — 나머지 슬롯도 채워보세요"
+              : "우선(A)·보충(B) TTF를 올리면 함께 미리보기됩니다";
+  const statusClass = mergeError
+    ? "sb-item sb-error"
+    : merged || notice
+      ? "sb-item sb-ok"
+      : "sb-item";
 
   return (
     <main className="app">
@@ -274,16 +370,28 @@ function App() {
         <div className="sidebar-header">FONT MOEUM</div>
 
         <div className="section-label">폰트 슬롯</div>
-        {(["a", "b"] as const).map((slot) => (
-          <FontSlot
-            key={slot}
-            slot={slot}
-            info={SLOT_INFO[slot]}
-            font={fonts[slot]}
-            error={errors[slot]}
-            onFile={(file) => loadFontFile(slot, file)}
-          />
-        ))}
+        <FontSlot
+          slot="a"
+          info={SLOT_INFO.a}
+          font={fonts.a}
+          error={errors.a}
+          onFile={(file) => loadFontFile("a", file)}
+        />
+        <button
+          className="swap-button"
+          disabled={!canSwap}
+          onClick={swapSlots}
+          title="A와 B를 맞바꿔 누가 라틴을 이길지 바꿉니다"
+        >
+          ⇅ A/B 스왑
+        </button>
+        <FontSlot
+          slot="b"
+          info={SLOT_INFO.b}
+          font={fonts.b}
+          error={errors.b}
+          onFile={(file) => loadFontFile("b", file)}
+        />
 
         <div className="section-label">미리보기 설정</div>
         <label className="control">
@@ -312,9 +420,25 @@ function App() {
           />
         </label>
 
+        <div className="section-label">출력</div>
+        <input
+          className="name-input"
+          value={outName}
+          spellCheck={false}
+          placeholder={DEFAULT_NAME}
+          onChange={(e) => setOutName(e.currentTarget.value)}
+          title="출력 폰트 패밀리 이름"
+        />
         <button className="merge-button" disabled={!canMerge} onClick={mergeFonts}>
           {merging && <span className="spinner" />}
           {merging ? "병합 중…" : "병합"}
+        </button>
+        <button
+          className="export-button"
+          disabled={!merged || merging}
+          onClick={exportMerged}
+        >
+          TTF로 저장…
         </button>
       </aside>
 
@@ -373,9 +497,7 @@ function App() {
         </div>
 
         <footer className="statusbar">
-          <span className={mergeError ? "sb-item sb-error" : merged ? "sb-item sb-ok" : "sb-item"}>
-            {statusText}
-          </span>
+          <span className={statusClass}>{statusText}</span>
           <span className="sb-right">
             <span className="sb-item">
               Ln {cursor.ln}, Col {cursor.col}

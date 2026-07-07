@@ -56,7 +56,8 @@ export const FONT_SAMPLES: FontSample[] = [
     label: "우아한 퀵정렬 (Haskell)",
     lang: "haskell",
     // 한 줄의 시. 함수형 감성 + 리스트 컴프리헨션의 기호들.
-    code: `quicksort :: Ord a => [a] -> [a]
+    code: `-- 하스켈 퀵정렬: 선언적이라 거의 정의를 그대로 옮긴 수준
+quicksort :: Ord a => [a] -> [a]
 quicksort []     = []
 quicksort (p:xs) = quicksort [x | x <- xs, x <  p]  -- 피벗보다 작은 것
                 ++ [p]                              -- 피벗
@@ -67,7 +68,8 @@ quicksort (p:xs) = quicksort [x | x <- xs, x <  p]  -- 피벗보다 작은 것
     label: "Y 콤비네이터 (람다 계산법)",
     lang: "javascript",
     // 이름 없는 재귀. 화살표(=>)를 대량으로 씀 → 리가처 확인에 최적.
-    code: `const Y = f => (x => f(v => x(x)(v)))(x => f(v => x(x)(v)));
+    code: `// Y 콤비네이터 — 익명 함수만으로 재귀를 만든다 (람다 계산법)
+const Y = f => (x => f(v => x(x)(v)))(x => f(v => x(x)(v)));
 
 const fact = Y(self => n => (n <= 1 ? 1 : n * self(n - 1)));
 console.log(fact(5)); // => 120, 이름 없이도 자기 자신을 부른다`,

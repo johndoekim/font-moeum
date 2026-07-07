@@ -128,6 +128,63 @@ body {
   color: var(--comment);
 }
 
+.swap-button {
+  align-self: center;
+  padding: 4px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--comment);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.swap-button:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--comment);
+}
+
+.swap-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.name-input {
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  outline: none;
+}
+
+.name-input:focus {
+  border-color: var(--purple);
+}
+
+.export-button {
+  padding: 8px 18px;
+  border: 1px solid var(--purple);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--purple);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.export-button:hover:not(:disabled) {
+  background: rgba(189, 147, 249, 0.12);
+}
+
+.export-button:disabled {
+  border-color: var(--line);
+  color: var(--comment);
+  cursor: default;
+}
+
 .control {
   display: flex;
   flex-direction: column;

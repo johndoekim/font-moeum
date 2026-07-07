@@ -76,9 +76,11 @@ struct AppState {
     sidecar: Mutex<Option<Sidecar>>,
     /// 프론트에서 업로드한 슬롯별 폰트의 임시 파일 경로 ("a" | "b")
     fonts: Mutex<HashMap<String, PathBuf>>,
+    /// 마지막(현재 미리보기 중인) 병합 결과 — export 대상
+    last_merged: Mutex<Option<Vec<u8>>>,
     scripts_dir: PathBuf,
     work_dir: PathBuf,
-    merge_seq: AtomicU64,
+    seq: AtomicU64,
 }
 
 /// 사이드카에 요청 하나를 보낸다. 죽어 있으면 (재)기동하고, 실패하면 버려서
@@ -122,9 +124,47 @@ fn upload_font(request: Request<'_>, state: State<'_, AppState>) -> Result<(), S
     let InvokeBody::Raw(bytes) = request.body() else {
         return Err("바이너리 본문이 필요합니다".into());
     };
-    let path = state.work_dir.join(format!("slot_{slot}.ttf"));
+    // 슬롯 고정 파일명을 쓰면 스왑 후 재업로드가 반대 슬롯 파일을 덮어쓴다 — 항상 유니크하게
+    let n = state.seq.fetch_add(1, Ordering::Relaxed);
+    let path = state.work_dir.join(format!("upload_{n}.ttf"));
     std::fs::write(&path, bytes).map_err(|e| format!("임시 파일 쓰기 실패: {e}"))?;
-    state.fonts.lock().unwrap().insert(slot, path);
+    if let Some(replaced) = state.fonts.lock().unwrap().insert(slot, path) {
+        let _ = std::fs::remove_file(replaced);
+    }
+    Ok(())
+}
+
+/// A·B 슬롯을 맞바꾼다 — "누가 라틴을 이기나" 스왑 (4a)
+#[tauri::command]
+fn swap_fonts(state: State<'_, AppState>) -> Result<(), String> {
+    let mut fonts = state.fonts.lock().unwrap();
+    let a = fonts.remove("a");
+    let b = fonts.remove("b");
+    if let Some(b) = b {
+        fonts.insert("a".to_string(), b);
+    }
+    if let Some(a) = a {
+        fonts.insert("b".to_string(), a);
+    }
+    Ok(())
+}
+
+/// 프론트 캐시 히트로 복원된 병합 결과를 export 대상과 동기화한다 (4b)
+#[tauri::command]
+fn set_merged(request: Request<'_>, state: State<'_, AppState>) -> Result<(), String> {
+    let InvokeBody::Raw(bytes) = request.body() else {
+        return Err("바이너리 본문이 필요합니다".into());
+    };
+    *state.last_merged.lock().unwrap() = Some(bytes.clone());
+    Ok(())
+}
+
+/// 현재 미리보기 중인 병합 결과를 지정 경로에 저장한다 (4d)
+#[tauri::command]
+fn export_merged(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let guard = state.last_merged.lock().unwrap();
+    let bytes = guard.as_ref().ok_or("저장할 병합 결과가 없습니다")?;
+    std::fs::write(&path, bytes).map_err(|e| format!("저장 실패: {e}"))?;
     Ok(())
 }
 
@@ -143,7 +183,7 @@ async fn merge_fonts(app: AppHandle, name: String, base: String) -> Result<Respo
             _ => return Err("A·B 두 폰트를 모두 올려야 합니다".to_string()),
         };
 
-        let seq = state.merge_seq.fetch_add(1, Ordering::Relaxed);
+        let seq = state.seq.fetch_add(1, Ordering::Relaxed);
         let out = state.work_dir.join(format!("merged_{seq}.ttf"));
 
         let resp = sidecar_call(
@@ -167,6 +207,7 @@ async fn merge_fonts(app: AppHandle, name: String, base: String) -> Result<Respo
 
         let bytes = std::fs::read(&out).map_err(|e| format!("병합 결과 읽기 실패: {e}"))?;
         let _ = std::fs::remove_file(&out);
+        *state.last_merged.lock().unwrap() = Some(bytes.clone());
         Ok(Response::new(bytes))
     })
     .await
@@ -177,6 +218,7 @@ async fn merge_fonts(app: AppHandle, name: String, base: String) -> Result<Respo
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // 개발 단계: 저장소 루트의 scripts/ (Phase 5에서 번들 리소스로 교체)
             let scripts_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -189,9 +231,10 @@ pub fn run() {
             app.manage(AppState {
                 sidecar: Mutex::new(None),
                 fonts: Mutex::new(HashMap::new()),
+                last_merged: Mutex::new(None),
                 scripts_dir,
                 work_dir,
-                merge_seq: AtomicU64::new(0),
+                seq: AtomicU64::new(0),
             });
 
             // 콜드 스타트 선지불: 백그라운드에서 사이드카를 미리 띄워 fonttools import까지 끝내둔다
@@ -208,7 +251,13 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![upload_font, merge_fonts])
+        .invoke_handler(tauri::generate_handler![
+            upload_font,
+            merge_fonts,
+            swap_fonts,
+            set_merged,
+            export_merged
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

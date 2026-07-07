@@ -1,8 +1,66 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { DEFAULT_SAMPLE, FONT_SAMPLES, FontSample } from "./samples";
 import "./App.css";
 
-const SAMPLE_TEXT = "안녕하세요 Hello 123 반갑습니다 Typography";
+// ── 원샷 신택스 하이라이터 ──────────────────────────────────────
+// 초기 렌더에만 적용되는 가벼운 토크나이저 (Dracula: 주석 파랑, 문자열 노랑,
+// 숫자 보라, 키워드/연산자 핑크). 편집을 시작하면 그 줄부터는 점차 평문화되는데,
+// 미리보기의 목적은 폰트 감별이므로 의도적으로 여기까지만 한다.
+
+const COMMENT_MARKER: Record<string, string> = {
+  rust: "//",
+  c: "//",
+  javascript: "//",
+  haskell: "--",
+};
+
+const KEYWORDS: Record<string, Set<string>> = {
+  rust: new Set(["fn", "let", "mut", "while", "if", "else", "return"]),
+  c: new Set(["float", "long", "return"]),
+  javascript: new Set(["const", "return"]),
+};
+
+const LANG_NAME: Record<string, string> = {
+  rust: "Rust",
+  c: "C",
+  haskell: "Haskell",
+  javascript: "JavaScript",
+  text: "Plain Text",
+};
+
+const TOKEN_RE = /(["'`])(?:\\.|(?!\1).)*?\1|0x[0-9A-Fa-f]+|\d+(?:\.\d+)?F?|[A-Za-z_$][\w$]*|[=!<>+\-*/&|:%^~?]+/g;
+
+interface Token {
+  text: string;
+  cls?: string;
+}
+
+function tokenizeLine(line: string, lang: string): Token[] {
+  const marker = COMMENT_MARKER[lang];
+  if (!marker) return [{ text: line }]; // text 등: 하이라이팅 없이 순수 폰트 감별용
+  const commentIdx = line.indexOf(marker);
+  const code = commentIdx >= 0 ? line.slice(0, commentIdx) : line;
+
+  const tokens: Token[] = [];
+  const keywords = KEYWORDS[lang];
+  let last = 0;
+  for (const m of code.matchAll(TOKEN_RE)) {
+    const start = m.index ?? 0;
+    if (start > last) tokens.push({ text: code.slice(last, start) });
+    const text = m[0];
+    let cls: string | undefined;
+    if (/^["'`]/.test(text)) cls = "tok-string";
+    else if (/^(0x|\d)/.test(text)) cls = "tok-number";
+    else if (/^[A-Za-z_$]/.test(text)) cls = keywords?.has(text) ? "tok-keyword" : undefined;
+    else cls = "tok-op";
+    tokens.push({ text, cls });
+    last = start + text.length;
+  }
+  if (last < code.length) tokens.push({ text: code.slice(last) });
+  if (commentIdx >= 0) tokens.push({ text: line.slice(commentIdx), cls: "tok-comment" });
+  return tokens;
+}
 
 interface LoadedFont {
   family: string;
@@ -17,11 +75,13 @@ const SLOT_INFO: Record<SlotId, { title: string; desc: string }> = {
 };
 
 function FontSlot({
+  slot,
   info,
   font,
   error,
   onFile,
 }: {
+  slot: SlotId;
   info: { title: string; desc: string };
   font: LoadedFont | null;
   error: string | null;
@@ -33,7 +93,7 @@ function FontSlot({
   return (
     <div
       className={
-        "slot" +
+        `slot slot-${slot}` +
         (dragOver ? " slot-dragover" : "") +
         (error ? " slot-error" : "") +
         (font ? " slot-loaded" : "")
@@ -53,7 +113,7 @@ function FontSlot({
     >
       <div className="slot-title">{info.title}</div>
       <div className="slot-file">
-        {error ?? font?.fileName ?? "TTF를 드래그하거나 클릭해서 선택"}
+        {error ?? font?.fileName ?? "TTF 드래그 또는 클릭"}
       </div>
       <div className="slot-desc">{info.desc}</div>
       <input
@@ -83,12 +143,53 @@ function App() {
   const [merged, setMerged] = useState<LoadedFont | null>(null);
   const [merging, setMerging] = useState(false);
   const [mergeError, setMergeError] = useState<string | null>(null);
-  const [fontSize, setFontSize] = useState(32);
-  const [lineHeight, setLineHeight] = useState(1.5);
+  const [sample, setSample] = useState<FontSample>(DEFAULT_SAMPLE);
+  const [fontSize, setFontSize] = useState(16);
+  const [lineHeight, setLineHeight] = useState(1.6);
+  const [cursor, setCursor] = useState({ ln: 1, col: 1 });
   // 슬롯별로 이전 face를 지우고, 패밀리 이름에 시퀀스를 붙여 캐시 충돌 방지.
   const facesRef = useRef<Record<SlotId, FontFace | null>>({ a: null, b: null });
   const mergedFaceRef = useRef<FontFace | null>(null);
   const faceSeqRef = useRef(0);
+  const previewRef = useRef<HTMLDivElement>(null);
+
+  // 커서 위치(Ln/Col) 추적 + 현재 줄 하이라이트 — contentEditable은 React가
+  // 자식을 다시 그리면 편집 내용이 깨지므로 클래스는 DOM에 직접 토글한다.
+  useEffect(() => {
+    function onSelectionChange() {
+      const preview = previewRef.current;
+      const sel = document.getSelection();
+      if (!preview || !sel?.anchorNode || !preview.contains(sel.anchorNode)) return;
+
+      let node: Node | null = sel.anchorNode;
+      let lineEl: Node | null = null;
+      while (node && node !== preview) {
+        if (node.parentNode === preview) {
+          lineEl = node;
+          break;
+        }
+        node = node.parentNode;
+      }
+      const lines = Array.from(preview.children);
+      const idx = lineEl ? lines.indexOf(lineEl as Element) : 0;
+      lines.forEach((el, i) => el.classList.toggle("active-line", i === idx));
+      // 하이라이트 span이 있어도 정확한 컬럼: 줄 시작 → 커서까지의 텍스트 길이
+      let col = (sel.anchorOffset ?? 0) + 1;
+      if (lineEl) {
+        try {
+          const range = document.createRange();
+          range.setStart(lineEl, 0);
+          range.setEnd(sel.anchorNode, sel.anchorOffset);
+          col = range.toString().length + 1;
+        } catch {
+          /* 폴백: anchorOffset */
+        }
+      }
+      setCursor({ ln: Math.max(idx, 0) + 1, col });
+    }
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () => document.removeEventListener("selectionchange", onSelectionChange);
+  }, []);
 
   function clearMerged() {
     if (mergedFaceRef.current) {
@@ -169,9 +270,26 @@ function App() {
 
   return (
     <main className="app">
-      <header className="toolbar">
-        <label className="slider">
-          <span className="slider-label">크기 {fontSize}px</span>
+      <aside className="sidebar">
+        <div className="sidebar-header">FONT MOA</div>
+
+        <div className="section-label">폰트 슬롯</div>
+        {(["a", "b"] as const).map((slot) => (
+          <FontSlot
+            key={slot}
+            slot={slot}
+            info={SLOT_INFO[slot]}
+            font={fonts[slot]}
+            error={errors[slot]}
+            onFile={(file) => loadFontFile(slot, file)}
+          />
+        ))}
+
+        <div className="section-label">미리보기 설정</div>
+        <label className="control">
+          <span>
+            크기 <b>{fontSize}px</b>
+          </span>
           <input
             type="range"
             min={12}
@@ -180,8 +298,10 @@ function App() {
             onChange={(e) => setFontSize(Number(e.currentTarget.value))}
           />
         </label>
-        <label className="slider">
-          <span className="slider-label">줄높이 {lineHeight.toFixed(2)}</span>
+        <label className="control">
+          <span>
+            줄높이 <b>{lineHeight.toFixed(2)}</b>
+          </span>
           <input
             type="range"
             min={1}
@@ -191,38 +311,83 @@ function App() {
             onChange={(e) => setLineHeight(Number(e.currentTarget.value))}
           />
         </label>
+
         <button className="merge-button" disabled={!canMerge} onClick={mergeFonts}>
           {merging && <span className="spinner" />}
           {merging ? "병합 중…" : "병합"}
         </button>
-        <span className={mergeError ? "status status-error" : "status"}>{statusText}</span>
-      </header>
+      </aside>
 
-      <section className="slots">
-        {(["a", "b"] as const).map((slot) => (
-          <FontSlot
-            key={slot}
-            info={SLOT_INFO[slot]}
-            font={fonts[slot]}
-            error={errors[slot]}
-            onFile={(file) => loadFontFile(slot, file)}
-          />
-        ))}
+      <section className="main">
+        <div className="tabbar">
+          {FONT_SAMPLES.map((s) => (
+            <div
+              key={s.id}
+              className={s.id === sample.id ? "tab tab-active" : "tab"}
+              title={s.label}
+              onClick={() => {
+                setSample(s);
+                setCursor({ ln: 1, col: 1 });
+              }}
+            >
+              {s.id === sample.id && (
+                <span className={merged ? "tab-dot tab-dot-merged" : "tab-dot"} />
+              )}
+              {s.label.replace(/\s*\(.*\)$/, "")}
+            </div>
+          ))}
+        </div>
+
+        <div className="editor">
+          <div
+            key={sample.id} /* 샘플 전환 = 파일 다시 열기 (편집 내용 리셋) */
+            ref={previewRef}
+            className="preview"
+            contentEditable
+            spellCheck={false}
+            suppressContentEditableWarning
+            style={{
+              fontFamily: previewFamily,
+              fontSize: `${fontSize}px`,
+              lineHeight,
+            }}
+          >
+            {sample.code.split("\n").map((line, i) => (
+              <div key={i}>
+                {line === "" ? (
+                  <br />
+                ) : (
+                  tokenizeLine(line, sample.lang).map((tok, j) =>
+                    tok.cls ? (
+                      <span key={j} className={tok.cls}>
+                        {tok.text}
+                      </span>
+                    ) : (
+                      tok.text
+                    ),
+                  )
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <footer className="statusbar">
+          <span className={mergeError ? "sb-item sb-error" : merged ? "sb-item sb-ok" : "sb-item"}>
+            {statusText}
+          </span>
+          <span className="sb-right">
+            <span className="sb-item">
+              Ln {cursor.ln}, Col {cursor.col}
+            </span>
+            <span className="sb-item">
+              {fontSize}px · {lineHeight.toFixed(2)}
+            </span>
+            <span className="sb-item">UTF-8</span>
+            <span className="sb-item">{LANG_NAME[sample.lang] ?? sample.lang}</span>
+          </span>
+        </footer>
       </section>
-
-      <div
-        className="preview"
-        contentEditable
-        spellCheck={false}
-        suppressContentEditableWarning
-        style={{
-          fontFamily: previewFamily,
-          fontSize: `${fontSize}px`,
-          lineHeight,
-        }}
-      >
-        {SAMPLE_TEXT}
-      </div>
     </main>
   );
 }

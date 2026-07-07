@@ -13,8 +13,10 @@
     "windows": [
       {
         "title": "font-moa",
-        "width": 900,
-        "height": 640,
+        "width": 1120,
+        "height": 720,
+        "minWidth": 800,
+        "minHeight": 520,
         "dragDropEnabled": false
       }
     ],

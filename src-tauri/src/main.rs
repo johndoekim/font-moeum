@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    font_moa_lib::run()
+    font_moeum_lib::run()
 }

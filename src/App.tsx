@@ -230,7 +230,7 @@ function App() {
     setMergeError(null);
     try {
       const data = await invoke<ArrayBuffer>("merge_fonts", {
-        name: "MoaMerged",
+        name: "MoeumMerged",
         base: "A",
       });
       const family = `merged-${++faceSeqRef.current}`;
@@ -239,7 +239,7 @@ function App() {
       if (mergedFaceRef.current) document.fonts.delete(mergedFaceRef.current);
       document.fonts.add(face);
       mergedFaceRef.current = face;
-      setMerged({ family, fileName: "MoaMerged" });
+      setMerged({ family, fileName: "MoeumMerged" });
     } catch (e) {
       setMergeError(String(e));
     } finally {
@@ -271,7 +271,7 @@ function App() {
   return (
     <main className="app">
       <aside className="sidebar">
-        <div className="sidebar-header">FONT MOA</div>
+        <div className="sidebar-header">FONT MOEUM</div>
 
         <div className="section-label">폰트 슬롯</div>
         {(["a", "b"] as const).map((slot) => (

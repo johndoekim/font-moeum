@@ -183,7 +183,7 @@ pub fn run() {
                 .parent()
                 .expect("src-tauri has parent")
                 .join("scripts");
-            let work_dir = std::env::temp_dir().join("font-moa");
+            let work_dir = std::env::temp_dir().join("font-moeum");
             std::fs::create_dir_all(&work_dir)?;
 
             app.manage(AppState {

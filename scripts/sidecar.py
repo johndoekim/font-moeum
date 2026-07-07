@@ -1,4 +1,4 @@
-"""font-moa persistent 사이드카.
+"""font-moeum persistent 사이드카.
 
 앱 시작 시 1회 기동되어 stdin에서 JSON 라인 명령을 읽고 stdout으로 JSON 라인을
 응답한다. fonttools import(콜드 스타트 비용)는 프로세스 기동 시 한 번만 지불.
@@ -7,7 +7,7 @@
   → {"cmd": "ping"}
   ← {"ok": true, "fonttools": "4.63.0"}
   → {"cmd": "merge", "font_a": "...", "font_b": "...", "output": "...",
-     "name": "MoaMerged", "base": "A"}
+     "name": "MoeumMerged", "base": "A"}
   ← {"ok": true, "path": "...", "elapsed": 2.8}   (실패 시 {"ok": false, "error": "..."})
   → {"cmd": "quit"}                                (응답 없이 종료; stdin EOF도 동일)
 """
@@ -33,7 +33,7 @@ def handle(req: dict):
         t0 = time.perf_counter()
         out = merge_to_file(
             req["font_a"], req["font_b"], req["output"],
-            name=req.get("name", "MoaMerged"),
+            name=req.get("name", "MoeumMerged"),
             base=req.get("base", "A"),
             upem=req.get("upem"),
         )

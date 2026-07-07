@@ -1,5 +1,5 @@
 [package]
-name = "font-moa"
+name = "font-moeum"
 version = "0.1.0"
 description = "영문 TTF + 한글 TTF 두 개를 병합하고 즉시 미리보기로 확인하는 GUI 툴"
 edition = "2021"
@@ -10,7 +10,7 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "font_moa_lib"
+name = "font_moeum_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

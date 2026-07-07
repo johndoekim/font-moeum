@@ -1,4 +1,4 @@
-"""font-moa 병합 엔진.
+"""font-moeum 병합 엔진.
 
 영문 TTF(A) + 한글 TTF(B)를 하나의 TTF로 병합한다.
 CLI로도 쓰고(merge.py 직접 실행), 사이드카(sidecar.py)가 라이브러리로도 쓴다.
@@ -61,7 +61,7 @@ def rewrite_names(font: TTFont, family: str, style: str = "Regular") -> None:
     entries = {
         1: family,                          # Family
         2: style,                           # Subfamily
-        3: f"{family} {style}; font-moa",   # Unique ID
+        3: f"{family} {style}; font-moeum", # Unique ID
         4: f"{family} {style}",             # Full name
         6: f"{ps_family}-{style}",          # PostScript name
         16: family,                         # Typographic family
@@ -73,7 +73,7 @@ def rewrite_names(font: TTFont, family: str, style: str = "Regular") -> None:
         name.setName(value, nid, *MAC)
 
 
-def merge_to_file(font_a, font_b, output, *, name: str = "MoaMerged",
+def merge_to_file(font_a, font_b, output, *, name: str = "MoeumMerged",
                   base: str = "A", upem: int | None = None) -> Path:
     """두 TTF를 병합해 output에 저장하고 경로를 돌려준다. 실패 시 MergeError."""
     paths = {"A": Path(font_a), "B": Path(font_b)}
@@ -118,7 +118,7 @@ def main(argv=None) -> int:
     )
     parser.add_argument("font_a", type=Path, help="폰트 A (영문)")
     parser.add_argument("font_b", type=Path, help="폰트 B (한글)")
-    parser.add_argument("--name", default="MoaMerged",
+    parser.add_argument("--name", default="MoeumMerged",
                         help="출력 폰트 패밀리 이름 (기본: %(default)s)")
     parser.add_argument("--base", choices=["A", "B"], default="A",
                         help="겹치는 라틴/숫자/문장부호를 가질 폰트 (기본: %(default)s)")

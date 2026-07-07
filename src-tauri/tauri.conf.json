@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "font-moa",
+  "productName": "font-moeum",
   "version": "0.1.0",
-  "identifier": "com.fontmoa.app",
+  "identifier": "com.fontmoeum.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "font-moa",
+        "title": "font-moeum",
         "width": 1120,
         "height": 720,
         "minWidth": 800,

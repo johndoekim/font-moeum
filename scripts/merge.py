@@ -1,6 +1,7 @@
 """font-moa 병합 엔진.
 
 영문 TTF(A) + 한글 TTF(B)를 하나의 TTF로 병합한다.
+CLI로도 쓰고(merge.py 직접 실행), 사이드카(sidecar.py)가 라이브러리로도 쓴다.
 
 - TrueType(glyf)만 지원 — fontTools Merger는 CFF(OTF) 병합 불가
 - 병합 전 unitsPerEm 통일(scale_upem) — 안 맞추면 A글자·B글자 크기가 따로 놈
@@ -23,7 +24,7 @@ from fontTools.ttLib import TTFont
 from fontTools.ttLib.scaleUpem import scale_upem
 
 # 사이드카 I/O는 콘솔 코드페이지(Windows cp949 등)와 무관하게 UTF-8 고정.
-# Phase 3의 stdin/stdout 프로토콜도 이 전제를 따른다.
+# stdout은 사이드카 프로토콜 전용이므로 라이브러리 함수는 stderr에만 쓴다.
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
@@ -31,22 +32,25 @@ WIN = (3, 1, 0x409)  # platformID, platEncID, langID
 MAC = (1, 0, 0)
 
 
-def fail(msg: str, code: int = 1) -> None:
-    print(f"오류: {msg}", file=sys.stderr)
-    sys.exit(code)
+class MergeError(Exception):
+    """입력 검증/병합 단계에서 사용자에게 보여줄 오류."""
+
+    def __init__(self, msg: str, code: int = 1):
+        super().__init__(msg)
+        self.code = code
 
 
 def load_ttf(path: Path) -> TTFont:
     """TTF를 로드하고 TrueType(glyf) 아웃라인인지 검증한다."""
     if not path.is_file():
-        fail(f"파일이 없습니다: {path}")
+        raise MergeError(f"파일이 없습니다: {path}")
     try:
         font = TTFont(str(path))
     except Exception as e:
-        fail(f"폰트를 열 수 없습니다 ({path.name}): {e}")
+        raise MergeError(f"폰트를 열 수 없습니다 ({path.name}): {e}")
     if "glyf" not in font:
         kind = "CFF(OTF)" if ("CFF " in font or "CFF2" in font) else "알 수 없는 형식"
-        fail(f"{path.name}: TrueType(glyf) 폰트가 아닙니다 — {kind}. TTF만 지원합니다.")
+        raise MergeError(f"{path.name}: TrueType(glyf) 폰트가 아닙니다 — {kind}. TTF만 지원합니다.")
     return font
 
 
@@ -69,6 +73,44 @@ def rewrite_names(font: TTFont, family: str, style: str = "Regular") -> None:
         name.setName(value, nid, *MAC)
 
 
+def merge_to_file(font_a, font_b, output, *, name: str = "MoaMerged",
+                  base: str = "A", upem: int | None = None) -> Path:
+    """두 TTF를 병합해 output에 저장하고 경로를 돌려준다. 실패 시 MergeError."""
+    paths = {"A": Path(font_a), "B": Path(font_b)}
+    fonts = {key: load_ttf(path) for key, path in paths.items()}
+
+    # unitsPerEm 통일 — 기본은 큰 쪽에 맞춰 확대(정밀도 손실 최소화)
+    upems = {key: font["head"].unitsPerEm for key, font in fonts.items()}
+    target_upem = upem or max(upems.values())
+
+    # base 폰트를 리스트 첫 번째로 — 겹치는 cmap에서 첫 번째가 이긴다
+    order = ["A", "B"] if base == "A" else ["B", "A"]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        merge_files = []
+        for key in order:
+            font = fonts[key]
+            if upems[key] != target_upem:
+                print(f"{key}({paths[key].name}): unitsPerEm {upems[key]} → {target_upem}",
+                      file=sys.stderr)
+                scale_upem(font, target_upem)
+            tmp_path = Path(tmp) / f"{key}.ttf"
+            font.save(str(tmp_path))
+            merge_files.append(str(tmp_path))
+
+        try:
+            merged = Merger().merge(merge_files)
+        except Exception as e:
+            raise MergeError(f"병합 실패: {e}", code=2)
+
+        # name 재작성 후 저장 (임시 파일이 살아있는 동안 완료해야 함)
+        rewrite_names(merged, name)
+        out_path = Path(output)
+        merged.save(str(out_path))
+
+    return out_path
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="merge.py",
@@ -88,40 +130,18 @@ def main(argv=None) -> int:
 
     t0 = time.perf_counter()
     out_path = args.output or Path(f"{args.name}.ttf")
-
-    paths = {"A": args.font_a, "B": args.font_b}
-    fonts = {key: load_ttf(path) for key, path in paths.items()}
-
-    # 2b. unitsPerEm 통일 — 기본은 큰 쪽에 맞춰 확대(정밀도 손실 최소화)
-    upems = {key: font["head"].unitsPerEm for key, font in fonts.items()}
-    target_upem = args.upem or max(upems.values())
-
-    # 2c. base 폰트를 리스트 첫 번째로 — 겹치는 cmap에서 첫 번째가 이긴다
-    order = ["A", "B"] if args.base == "A" else ["B", "A"]
-
-    with tempfile.TemporaryDirectory() as tmp:
-        merge_files = []
-        for key in order:
-            font = fonts[key]
-            if upems[key] != target_upem:
-                print(f"{key}({paths[key].name}): unitsPerEm {upems[key]} → {target_upem}")
-                scale_upem(font, target_upem)
-            tmp_path = Path(tmp) / f"{key}.ttf"
-            font.save(str(tmp_path))
-            merge_files.append(str(tmp_path))
-
-        try:
-            merged = Merger().merge(merge_files)
-        except Exception as e:
-            fail(f"병합 실패: {e}", code=2)
-
-        # 2d. name 테이블 재작성 후 저장 (임시 파일이 살아있는 동안 완료해야 함)
-        rewrite_names(merged, args.name)
-        merged.save(str(out_path))
+    try:
+        merge_to_file(args.font_a, args.font_b, out_path,
+                      name=args.name, base=args.base, upem=args.upem)
+    except MergeError as e:
+        print(f"오류: {e}", file=sys.stderr)
+        return e.code
 
     elapsed = time.perf_counter() - t0
-    print(f"병합 완료: {out_path} — 패밀리 '{args.name}', upem {target_upem}, {elapsed:.1f}초")
-    print(f"  우선({args.base}): {paths[order[0]].name} · 보조: {paths[order[1]].name}")
+    first, second = ("A", "B") if args.base == "A" else ("B", "A")
+    names = {"A": args.font_a.name, "B": args.font_b.name}
+    print(f"병합 완료: {out_path} — 패밀리 '{args.name}', {elapsed:.1f}초")
+    print(f"  우선({first}): {names[first]} · 보조: {names[second]}")
     return 0
 
 

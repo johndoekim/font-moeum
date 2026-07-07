@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
 const SAMPLE_TEXT = "안녕하세요 Hello 123 반갑습니다 Typography";
@@ -79,11 +80,24 @@ function App() {
     a: null,
     b: null,
   });
+  const [merged, setMerged] = useState<LoadedFont | null>(null);
+  const [merging, setMerging] = useState(false);
+  const [mergeError, setMergeError] = useState<string | null>(null);
   const [fontSize, setFontSize] = useState(32);
   const [lineHeight, setLineHeight] = useState(1.5);
   // 슬롯별로 이전 face를 지우고, 패밀리 이름에 시퀀스를 붙여 캐시 충돌 방지.
   const facesRef = useRef<Record<SlotId, FontFace | null>>({ a: null, b: null });
+  const mergedFaceRef = useRef<FontFace | null>(null);
   const faceSeqRef = useRef(0);
+
+  function clearMerged() {
+    if (mergedFaceRef.current) {
+      document.fonts.delete(mergedFaceRef.current);
+      mergedFaceRef.current = null;
+    }
+    setMerged(null);
+    setMergeError(null);
+  }
 
   async function loadFontFile(slot: SlotId, file: File) {
     if (!file.name.toLowerCase().endsWith(".ttf")) {
@@ -101,24 +115,57 @@ function App() {
       facesRef.current[slot] = face;
       setFonts((prevFonts) => ({ ...prevFonts, [slot]: { family, fileName: file.name } }));
       setErrors((prevErrors) => ({ ...prevErrors, [slot]: null }));
-    } catch {
-      setErrors((prev) => ({ ...prev, [slot]: `로드 실패: ${file.name}` }));
+      // 슬롯이 바뀌면 기존 병합 결과는 무효
+      clearMerged();
+      // 병합용으로 Rust에 바이트 업로드 (웹뷰는 파일 경로를 모르므로)
+      await invoke("upload_font", new Uint8Array(buffer), { headers: { slot } });
+    } catch (e) {
+      setErrors((prev) => ({ ...prev, [slot]: `로드 실패: ${String(e)}` }));
     }
   }
 
-  // A → B 순서의 CSS 폴백 스택: 라틴은 A가 이기고, A에 없는 한글은 B가 받는다.
-  // 실제 병합(Phase 2~3) 전까지 병합 결과를 근사하는 미리보기.
+  async function mergeFonts() {
+    setMerging(true);
+    setMergeError(null);
+    try {
+      const data = await invoke<ArrayBuffer>("merge_fonts", {
+        name: "MoaMerged",
+        base: "A",
+      });
+      const family = `merged-${++faceSeqRef.current}`;
+      const face = new FontFace(family, data);
+      await face.load();
+      if (mergedFaceRef.current) document.fonts.delete(mergedFaceRef.current);
+      document.fonts.add(face);
+      mergedFaceRef.current = face;
+      setMerged({ family, fileName: "MoaMerged" });
+    } catch (e) {
+      setMergeError(String(e));
+    } finally {
+      setMerging(false);
+    }
+  }
+
+  // A → B 순서의 CSS 폴백 스택: 병합 전 근사 미리보기.
   const familyStack = [fonts.a, fonts.b]
     .filter((f): f is LoadedFont => f !== null)
     .map((f) => `"${f.family}"`)
     .join(", ");
+  // 병합 결과가 있으면 그것만 사용 — 진짜 병합 폰트의 미리보기.
+  const previewFamily = merged ? `"${merged.family}"` : familyStack || undefined;
 
-  const statusText =
-    fonts.a && fonts.b
-      ? "A 라틴 + B 한글 조합 미리보기 중 (CSS 폴백)"
-      : fonts.a || fonts.b
-        ? "폰트 1개 적용 중 — 나머지 슬롯도 채워보세요"
-        : "A(영문)·B(한글) TTF를 올리면 함께 미리보기됩니다";
+  const canMerge = fonts.a !== null && fonts.b !== null && !merging;
+  const statusText = mergeError
+    ? mergeError
+    : merging
+      ? "병합 중… 첫 병합은 몇 초 걸립니다"
+      : merged
+        ? "병합 폰트 미리보기 중 (실제 병합 결과)"
+        : fonts.a && fonts.b
+          ? "A 라틴 + B 한글 조합 미리보기 중 (CSS 폴백 근사)"
+          : fonts.a || fonts.b
+            ? "폰트 1개 적용 중 — 나머지 슬롯도 채워보세요"
+            : "A(영문)·B(한글) TTF를 올리면 함께 미리보기됩니다";
 
   return (
     <main className="app">
@@ -144,7 +191,11 @@ function App() {
             onChange={(e) => setLineHeight(Number(e.currentTarget.value))}
           />
         </label>
-        <span className="status">{statusText}</span>
+        <button className="merge-button" disabled={!canMerge} onClick={mergeFonts}>
+          {merging && <span className="spinner" />}
+          {merging ? "병합 중…" : "병합"}
+        </button>
+        <span className={mergeError ? "status status-error" : "status"}>{statusText}</span>
       </header>
 
       <section className="slots">
@@ -165,7 +216,7 @@ function App() {
         spellCheck={false}
         suppressContentEditableWarning
         style={{
-          fontFamily: familyStack || undefined,
+          fontFamily: previewFamily,
           fontSize: `${fontSize}px`,
           lineHeight,
         }}

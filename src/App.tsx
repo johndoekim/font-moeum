@@ -11,6 +11,8 @@ interface LoadedFont {
 function App() {
   const [loadedFont, setLoadedFont] = useState<LoadedFont | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fontSize, setFontSize] = useState(32);
+  const [lineHeight, setLineHeight] = useState(1.5);
   // 같은 파일을 다시 골라도 새 face가 이기도록 패밀리 이름에 시퀀스를 붙이고,
   // 이전 face는 document.fonts에서 제거한다 (캐시 충돌 방지).
   const prevFaceRef = useRef<FontFace | null>(null);
@@ -49,6 +51,27 @@ function App() {
             }}
           />
         </label>
+        <label className="slider">
+          <span className="slider-label">크기 {fontSize}px</span>
+          <input
+            type="range"
+            min={12}
+            max={120}
+            value={fontSize}
+            onChange={(e) => setFontSize(Number(e.currentTarget.value))}
+          />
+        </label>
+        <label className="slider">
+          <span className="slider-label">줄높이 {lineHeight.toFixed(2)}</span>
+          <input
+            type="range"
+            min={1}
+            max={2.5}
+            step={0.05}
+            value={lineHeight}
+            onChange={(e) => setLineHeight(Number(e.currentTarget.value))}
+          />
+        </label>
         <span className={error ? "status status-error" : "status"}>
           {error ?? loadedFont?.fileName ?? "폰트 미선택 — 시스템 폰트로 표시 중"}
         </span>
@@ -59,7 +82,11 @@ function App() {
         contentEditable
         spellCheck={false}
         suppressContentEditableWarning
-        style={{ fontFamily: loadedFont ? `"${loadedFont.family}"` : undefined }}
+        style={{
+          fontFamily: loadedFont ? `"${loadedFont.family}"` : undefined,
+          fontSize: `${fontSize}px`,
+          lineHeight,
+        }}
       >
         {SAMPLE_TEXT}
       </div>

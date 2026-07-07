@@ -43,7 +43,25 @@ body {
   display: none;
 }
 
+.slider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.slider-label {
+  min-width: 82px;
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+
+.slider input[type="range"] {
+  width: 130px;
+}
+
 .status {
+  margin-left: auto;
   font-size: 13px;
   opacity: 0.65;
 }
@@ -56,8 +74,6 @@ body {
 .preview {
   flex: 1;
   padding: 28px 32px;
-  font-size: 32px;
-  line-height: 1.5;
   outline: none;
   overflow-y: auto;
   white-space: pre-wrap;

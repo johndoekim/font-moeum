@@ -26,21 +26,62 @@ body {
   flex-shrink: 0;
 }
 
-.file-button {
-  padding: 6px 14px;
-  border: 1px solid rgba(128, 128, 128, 0.5);
-  border-radius: 6px;
-  font-size: 13px;
+.slots {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  flex-shrink: 0;
+}
+
+.slot {
+  flex: 1;
+  padding: 12px 16px;
+  border: 1.5px dashed rgba(128, 128, 128, 0.5);
+  border-radius: 10px;
   cursor: pointer;
   user-select: none;
+  transition: border-color 0.15s, background-color 0.15s;
 }
 
-.file-button:hover {
-  background: rgba(128, 128, 128, 0.15);
+.slot:hover {
+  background: rgba(128, 128, 128, 0.08);
 }
 
-.file-button input[type="file"] {
-  display: none;
+.slot-dragover {
+  border-color: #4a90d9;
+  background: rgba(74, 144, 217, 0.12);
+}
+
+.slot-loaded {
+  border-style: solid;
+  border-color: rgba(74, 144, 217, 0.6);
+}
+
+.slot-error {
+  border-color: #d64545;
+}
+
+.slot-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.slot-file {
+  font-size: 14px;
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slot-error .slot-file {
+  color: #d64545;
+}
+
+.slot-desc {
+  font-size: 12px;
+  opacity: 0.55;
 }
 
 .slider {

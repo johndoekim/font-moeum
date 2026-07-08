@@ -121,7 +121,8 @@ def fit_merge_to_file(font_a, font_b, output, *, name="MoeumMono", style="Regula
     실패 시 MergeError.
     """
     font_a = load_ttf(Path(font_a))
-    font_b = load_ttf(Path(font_b))
+    font_b_path = Path(font_b)
+    font_b = load_ttf(font_b_path)
     warnings: list[str] = []
 
     # --- 1. 검증·파라미터 계산 (전부 A의 좌표계 기준) ---
@@ -150,6 +151,10 @@ def fit_merge_to_file(font_a, font_b, output, *, name="MoeumMono", style="Regula
 
     # --- 2. 복사 대상 코드포인트 수집 (B의 best cmap 기준) ---
     cmap_b = font_b.getBestCmap()
+    if not cmap_b:
+        raise MergeError(
+            f"{font_b_path.name}: 유니코드 cmap이 없습니다 — 복사할 한글/CJK 글리프를 "
+            f"찾을 수 없습니다.")
     cmap_a = font_a.getBestCmap()
     plan: list[tuple[int, str, str]] = []  # (코드포인트, B 소스 글리프 이름, category)
     for lo, hi, category in CJK_RANGES:

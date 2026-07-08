@@ -201,6 +201,9 @@ function App() {
   const [monoOpts, setMonoOpts] = useState<MonoOpts>(MONO_DEFAULTS);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [stats, setStats] = useState<unknown>(null); // 현재 미리보기 병합의 사이드카 통계
+  // 현재 미리보기 중인 병합이 실제로 어느 모드로 만들어졌는지 — get_merge_stats가 실패해
+  // stats가 null이어도 이 값은 mergeFonts 호출 시점의 mode를 그대로 담아 항상 신뢰 가능하다.
+  const [mergedMode, setMergedMode] = useState<MergeMode | null>(null);
   const [sample, setSample] = useState<FontSample>(DEFAULT_SAMPLE);
   const [fontSize, setFontSize] = useState(16);
   const [lineHeight, setLineHeight] = useState(1.6);
@@ -273,6 +276,7 @@ function App() {
     setMergeError(null);
     setNotice(null);
     setStats(null);
+    setMergedMode(null);
   }
 
   async function loadFontFile(slot: SlotId, file: File) {
@@ -347,6 +351,7 @@ function App() {
         await invoke("set_merged", new Uint8Array(cached.bytes)); // export 대상 동기화
         setMerged({ family: cached.family, fileName: name });
         setStats(cached.stats);
+        setMergedMode(mode);
         lastMergedKeyRef.current = key;
         flashNotice("현재 조합·옵션은 이미 병합돼 있어 캐시에서 복원 — 결과 동일, 재계산 생략");
       } catch (e) {
@@ -373,6 +378,7 @@ function App() {
       });
       setMerged({ family, fileName: name });
       setStats(stats);
+      setMergedMode(mode);
       lastMergedKeyRef.current = key;
       const warnings = (stats as { warnings?: unknown } | null)?.warnings;
       if (Array.isArray(warnings) && warnings.length)
@@ -439,22 +445,31 @@ function App() {
 
   // 4a. A/B 스왑 — 파일·face·업로드 번호를 통째로 맞바꾸고, 병합돼 있었다면 자동 재병합
   async function swapSlots() {
-    if (merging) return;
+    // mergingRef는 동기 플래그라 merging(state)보다 정확하다(캐시 복원처럼 merging state가
+    // 안 켜지는 경로도 있음). 자동 재병합 스케줄러와 이 플래그를 공유해 스왑↔자동 재병합이
+    // 서로 배타적으로 실행되게 한다.
+    if (mergingRef.current) return;
     const wasMerged = merged !== null && fonts.a !== null && fonts.b !== null;
-    // Rust 쪽 스왑이 성공한 뒤에만 프론트를 뒤집는다 — 실패 시 양쪽 A/B가 어긋나면
-    // 이후 병합이 조용히 반대 조합으로 나간다
+    mergingRef.current = true;
+    // 스왑 IPC를 기다리기 전에 대기 중인 debounce 재병합 타이머를 미리 재운다
+    // (merged→null이 되면 effect cleanup이 타이머를 clear). 이걸 뒤로 미루면 스왑 대기 중
+    // 타이머가 만료돼 requestAutoMerge가 병합을 시작하고, 스왑 완료 후 재병합이 겹쳐 실행된다.
+    clearMerged();
     try {
+      // Rust 쪽 스왑이 성공한 뒤에만 프론트를 뒤집는다 — 실패 시 양쪽 A/B가 어긋나면
+      // 이후 병합이 조용히 반대 조합으로 나간다
       await invoke("swap_fonts");
     } catch (e) {
       setMergeError(String(e));
+      mergingRef.current = false;
       return;
     }
     setFonts((p) => ({ a: p.b, b: p.a }));
     setErrors((p) => ({ a: p.b, b: p.a }));
     facesRef.current = { a: facesRef.current.b, b: facesRef.current.a };
     slotSeqRef.current = { a: slotSeqRef.current.b, b: slotSeqRef.current.a };
-    clearMerged();
-    if (wasMerged) await mergeFonts();
+    mergingRef.current = false; // 재병합은 스케줄러를 거치게 하기 위해 여기서 반드시 먼저 해제
+    if (wasMerged) await requestAutoMerge();
   }
 
   // 4d. 병합 결과 TTF로 저장
@@ -483,7 +498,8 @@ function App() {
 
   const canMerge = fonts.a !== null && fonts.b !== null && !merging;
   const canSwap = !merging && (fonts.a !== null || fonts.b !== null);
-  // 현재 미리보기 중인 병합의 통계 — stats.mode가 표시의 진실(현재 mode state와 다를 수 있음)
+  // 현재 미리보기 중인 병합의 통계. 모드 판정은 stats.mode가 아니라 mergedMode(병합 시점의
+  // mode)로 한다 — get_merge_stats가 실패해 stats가 null이어도 문구가 어긋나지 않는다.
   const st = stats as Record<string, unknown> | null;
   const baseFont = basicOpts.base === "A" ? fonts.a : fonts.b;
   const statusText = mergeError
@@ -495,7 +511,7 @@ function App() {
       : notice
         ? notice
         : merged
-          ? st?.mode === "mono"
+          ? mergedMode === "mono"
             ? `${merged.fileName} · 글리프 ${num(st?.copied)}개 복사` +
               (num(st?.hanja_copied) ? ` (한자 ${num(st?.hanja_copied)})` : "") +
               ` · 자동 축소 ${num(st?.capped)}개` +
@@ -593,7 +609,9 @@ function App() {
                     value={basicOpts.upem ?? ""}
                     onChange={(e) => {
                       const v = e.currentTarget.value.trim();
-                      setBasicOpts((o) => ({ ...o, upem: v === "" ? null : Number(v) }));
+                      const n = Number(v);
+                      // 빈칸은 자동(null), 숫자로 안 읽히는 쓰레기 입력도 자동으로 폴백.
+                      setBasicOpts((o) => ({ ...o, upem: v !== "" && Number.isFinite(n) ? n : null }));
                     }}
                   />
                 </label>

@@ -284,6 +284,27 @@ def _add_jamo_ccmp(font, cmap: dict) -> int:
     return len(rules)
 
 
+# 소스 글리프 분석(기록+바운즈)은 korean_scale/ty/width_mult와 무관하게 B의
+# 아웃라인에만 의존한다 → persistent 사이드카에서 B 신원별로 캐시해 재조정 루프의
+# 지배적 비용(기록 ~3s + 바운즈 ~0.6s)을 재병합마다 건너뛴다. 단일 엔트리(B가
+# 바뀌면 통째 교체)로 메모리를 바운드한다.
+_analysis_cache: dict = {"key": None, "data": None}
+
+
+def _analyze_source(glyphset, src) -> tuple:
+    """소스 글리프를 1회 기록(컴포지트 평탄화)하고 바운딩 박스를 잰다.
+
+    반환 (recording, bounds) — scale과 무관하므로 캐시 가능. RecordingPen.replay는
+    self.value를 읽기만 하고 변형하지 않으므로, 같은 recording을 여러 병합에서
+    서로 다른 TransformPen으로 재생해도 안전하다.
+    """
+    recording = DecomposingRecordingPen(glyphset, skipMissingComponents=True)
+    glyphset[src].draw(recording)
+    bounds_pen = BoundsPen(None)
+    recording.replay(bounds_pen)
+    return recording, bounds_pen.bounds
+
+
 def fit_merge_to_file(font_a, font_b, output, *, name="MoeumMono", style="Regular",
                       korean_scale=1.15, width_mult=2.0, ty=0.0,
                       include_hanja=True, fullwidth_source="B",
@@ -353,6 +374,16 @@ def fit_merge_to_file(font_a, font_b, output, *, name="MoeumMono", style="Regula
     new_order = list(font_a.getGlyphOrder())
     existing = set(new_order)
 
+    # B 신원별 분석 캐시 — mtime_ns+size로 내용 변경 감지(같은 경로에 B가 재업로드돼도
+    # 무효화). include_hanja/fullwidth는 키에 넣지 않는다 — 어떤 글리프를 emit할지만
+    # 바꿀 뿐 개별 글리프의 기록·바운즈는 불변이므로 아래 지연 채움이 알아서 처리한다.
+    st = font_b_path.stat()
+    cache_key = (str(font_b_path.resolve()), st.st_mtime_ns, st.st_size)
+    if _analysis_cache["key"] != cache_key:
+        _analysis_cache["key"] = cache_key
+        _analysis_cache["data"] = {}
+    analysis = _analysis_cache["data"]   # {src_glyph_name: (recording, bounds)}
+
     source_cache: dict[str, str] = {}  # B 소스 글리프 이름 → 새 글리프 이름
     cmap_updates: dict[int, str] = {}
     copied = capped = glyphs_added = hanja_copied = 0
@@ -362,19 +393,20 @@ def fit_merge_to_file(font_a, font_b, output, *, name="MoeumMono", style="Regula
         if new_name is None:
             new_name = _unique_name(cp, existing)
 
-            # 1회 기록 (컴포지트 평탄화) 후 바운즈·변환에 재생
-            recording = DecomposingRecordingPen(glyphset_b, skipMissingComponents=True)
-            glyphset_b[src].draw(recording)
-            bounds_pen = BoundsPen(None)
-            recording.replay(bounds_pen)
+            # 캐시 조회 — 없으면 지연 채움(필요한 글리프만 분석해 캐시에 채운다)
+            cached = analysis.get(src)
+            if cached is None:
+                cached = _analyze_source(glyphset_b, src)
+                analysis[src] = cached
+            recording, bounds = cached
 
             tt_pen = TTGlyphPen(None)
-            if bounds_pen.bounds is None:
+            if bounds is None:
                 # 빈 글리프 (예: U+3000 전각 공백) — 윤곽 없이 폭만 등록
                 glyph = tt_pen.glyph()
                 lsb = 0
             else:
-                xmin, ymin, xmax, ymax = bounds_pen.bounds
+                xmin, ymin, xmax, ymax = bounds
                 # 스케일 캡 — 셀 폭·세로 안전 범위를 넘으면 축소
                 scale = requested_scale
                 width = xmax - xmin

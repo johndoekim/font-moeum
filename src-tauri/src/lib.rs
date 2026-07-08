@@ -78,6 +78,8 @@ struct AppState {
     fonts: Mutex<HashMap<String, PathBuf>>,
     /// 마지막(현재 미리보기 중인) 병합 결과 — export 대상
     last_merged: Mutex<Option<Vec<u8>>>,
+    /// 마지막 병합의 사이드카 stats (mode별 통계) — UI 조회용
+    last_stats: Mutex<Option<Value>>,
     scripts_dir: PathBuf,
     work_dir: PathBuf,
     seq: AtomicU64,
@@ -169,8 +171,16 @@ fn export_merged(path: String, state: State<'_, AppState>) -> Result<(), String>
 }
 
 /// 업로드된 A·B를 사이드카로 병합하고 결과 TTF 바이트를 그대로(raw IPC) 반환한다.
+/// `options`는 사이드카 merge 요청에 그대로 passthrough되는 JSON object
+/// (mode/name/base/style/korean_scale/... 등 엔진별 옵션) — 예약 키
+/// (cmd/font_a/font_b/output)는 프론트가 보내도 무시되고 서버 값으로 덮인다.
 #[tauri::command]
-async fn merge_fonts(app: AppHandle, name: String, base: String) -> Result<Response, String> {
+async fn merge_fonts(app: AppHandle, options: Value) -> Result<Response, String> {
+    let mut req = options
+        .as_object()
+        .cloned()
+        .ok_or("병합 옵션이 올바르지 않습니다".to_string())?;
+
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
 
@@ -186,17 +196,13 @@ async fn merge_fonts(app: AppHandle, name: String, base: String) -> Result<Respo
         let seq = state.seq.fetch_add(1, Ordering::Relaxed);
         let out = state.work_dir.join(format!("merged_{seq}.ttf"));
 
-        let resp = sidecar_call(
-            &state,
-            json!({
-                "cmd": "merge",
-                "font_a": font_a.to_string_lossy(),
-                "font_b": font_b.to_string_lossy(),
-                "output": out.to_string_lossy(),
-                "name": name,
-                "base": base,
-            }),
-        )?;
+        // 예약 키는 프론트 옵션을 덮어써 마지막에 넣는다 — 임의의 cmd/경로 주입 방지
+        req.insert("cmd".into(), json!("merge"));
+        req.insert("font_a".into(), json!(font_a.to_string_lossy()));
+        req.insert("font_b".into(), json!(font_b.to_string_lossy()));
+        req.insert("output".into(), json!(out.to_string_lossy()));
+
+        let resp = sidecar_call(&state, Value::Object(req))?;
         if resp.get("ok").and_then(Value::as_bool) != Some(true) {
             return Err(resp
                 .get("error")
@@ -205,6 +211,8 @@ async fn merge_fonts(app: AppHandle, name: String, base: String) -> Result<Respo
                 .to_string());
         }
 
+        *state.last_stats.lock().unwrap() = Some(resp.get("stats").cloned().unwrap_or(Value::Null));
+
         let bytes = std::fs::read(&out).map_err(|e| format!("병합 결과 읽기 실패: {e}"))?;
         let _ = std::fs::remove_file(&out);
         *state.last_merged.lock().unwrap() = Some(bytes.clone());
@@ -212,6 +220,12 @@ async fn merge_fonts(app: AppHandle, name: String, base: String) -> Result<Respo
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 마지막 병합의 사이드카 stats를 그대로 돌려준다 (없으면 null)
+#[tauri::command]
+fn get_merge_stats(state: State<'_, AppState>) -> Option<Value> {
+    state.last_stats.lock().unwrap().clone()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -232,6 +246,7 @@ pub fn run() {
                 sidecar: Mutex::new(None),
                 fonts: Mutex::new(HashMap::new()),
                 last_merged: Mutex::new(None),
+                last_stats: Mutex::new(None),
                 scripts_dir,
                 work_dir,
                 seq: AtomicU64::new(0),
@@ -254,6 +269,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             upload_font,
             merge_fonts,
+            get_merge_stats,
             swap_fonts,
             set_merged,
             export_merged

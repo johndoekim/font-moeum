@@ -58,12 +58,13 @@ def rewrite_names(font: TTFont, family: str, style: str = "Regular") -> None:
     """출력 폰트의 name 테이블을 새 패밀리 이름으로 재작성한다."""
     name = font["name"]
     ps_family = "".join(family.split())  # PostScript 이름은 공백 불가
+    ps_style = "".join(style.split())    # PostScript 이름은 공백 불가 ("Bold Italic" → "BoldItalic")
     entries = {
         1: family,                          # Family
         2: style,                           # Subfamily
         3: f"{family} {style}; font-moeum", # Unique ID
         4: f"{family} {style}",             # Full name
-        6: f"{ps_family}-{style}",          # PostScript name
+        6: f"{ps_family}-{ps_style}",       # PostScript name
         16: family,                         # Typographic family
         17: style,                          # Typographic subfamily
     }
@@ -73,8 +74,44 @@ def rewrite_names(font: TTFont, family: str, style: str = "Regular") -> None:
         name.setName(value, nid, *MAC)
 
 
+def apply_style_bits(font: TTFont, style: str) -> None:
+    """style에 따라 OS/2.fsSelection · head.macStyle · OS/2.usWeightClass를 설정한다.
+
+    허용 style: "Regular" | "Bold" | "Italic" | "Bold Italic"
+    각 비트 플래그는 관련 비트만 클리어한 뒤 다시 설정한다 — USE_TYPO_METRICS 등
+    다른 비트는 건드리지 않는다. usWeightClass는 bold일 때만 700으로 올리고,
+    bold가 아니면 원본 값(A 폰트가 Light 등이어도)을 그대로 둔다.
+    """
+    bold = "Bold" in style
+    italic = "Italic" in style
+
+    if "OS/2" in font:
+        os2 = font["OS/2"]
+        fs = os2.fsSelection
+        fs &= ~((1 << 0) | (1 << 5) | (1 << 6))  # ITALIC, BOLD, REGULAR 클리어
+        if italic:
+            fs |= 1 << 0
+        if bold:
+            fs |= 1 << 5
+        if not bold and not italic:
+            fs |= 1 << 6
+        os2.fsSelection = fs
+        if bold:
+            os2.usWeightClass = 700
+
+    if "head" in font:
+        head = font["head"]
+        ms = head.macStyle
+        ms &= ~((1 << 0) | (1 << 1))  # Bold, Italic 클리어
+        if bold:
+            ms |= 1 << 0
+        if italic:
+            ms |= 1 << 1
+        head.macStyle = ms
+
+
 def merge_to_file(font_a, font_b, output, *, name: str = "MoeumMerged",
-                  base: str = "A", upem: int | None = None) -> Path:
+                  base: str = "A", upem: int | None = None, style: str = "Regular") -> Path:
     """두 TTF를 병합해 output에 저장하고 경로를 돌려준다. 실패 시 MergeError."""
     paths = {"A": Path(font_a), "B": Path(font_b)}
     fonts = {key: load_ttf(path) for key, path in paths.items()}
@@ -104,7 +141,8 @@ def merge_to_file(font_a, font_b, output, *, name: str = "MoeumMerged",
             raise MergeError(f"병합 실패: {e}", code=2)
 
         # name 재작성 후 저장 (임시 파일이 살아있는 동안 완료해야 함)
-        rewrite_names(merged, name)
+        rewrite_names(merged, name, style)
+        apply_style_bits(merged, style)
         out_path = Path(output)
         merged.save(str(out_path))
 
@@ -126,13 +164,15 @@ def main(argv=None) -> int:
                         help="출력 경로 (기본: <name>.ttf)")
     parser.add_argument("--upem", type=int, default=None,
                         help="통일할 unitsPerEm (기본: 두 폰트 중 큰 값)")
+    parser.add_argument("--style", choices=["Regular", "Bold", "Italic", "Bold Italic"], default="Regular",
+                        help="출력 폰트 스타일 (기본: %(default)s)")
     args = parser.parse_args(argv)
 
     t0 = time.perf_counter()
     out_path = args.output or Path(f"{args.name}.ttf")
     try:
         merge_to_file(args.font_a, args.font_b, out_path,
-                      name=args.name, base=args.base, upem=args.upem)
+                      name=args.name, base=args.base, upem=args.upem, style=args.style)
     except MergeError as e:
         print(f"오류: {e}", file=sys.stderr)
         return e.code

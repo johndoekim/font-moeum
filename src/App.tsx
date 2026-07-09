@@ -2,207 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { DEFAULT_SAMPLE, FONT_SAMPLES, FontSample } from "./samples";
+import type { LoadedFont, MergedEntry, SlotId, MergeMode, Style, BasicOpts, MonoOpts } from "./types";
+import { SLOT_INFO, BASIC_DEFAULTS, MONO_DEFAULTS, DEFAULT_NAMES, STYLES, UPEM_MIN, UPEM_MAX } from "./types";
+import { readUnitsPerEm } from "./fontUtils";
+import { buildStatus } from "./status";
+import { tokenizeLine, LANG_NAME } from "./syntax";
+import { FontSlot } from "./FontSlot";
+import { useCursorTracking } from "./useCursorTracking";
+import { StatusBar } from "./StatusBar";
 import "./App.css";
-
-// ── 원샷 신택스 하이라이터 ──────────────────────────────────────
-// 초기 렌더에만 적용되는 가벼운 토크나이저 (Dracula: 주석 파랑, 문자열 노랑,
-// 숫자 보라, 키워드/연산자 핑크). 편집을 시작하면 그 줄부터는 점차 평문화되는데,
-// 미리보기의 목적은 폰트 감별이므로 의도적으로 여기까지만 한다.
-
-const COMMENT_MARKER: Record<string, string> = {
-  rust: "//",
-  c: "//",
-  javascript: "//",
-  haskell: "--",
-};
-
-const KEYWORDS: Record<string, Set<string>> = {
-  rust: new Set(["fn", "let", "mut", "while", "if", "else", "return"]),
-  c: new Set(["float", "long", "return"]),
-  javascript: new Set(["const", "return"]),
-};
-
-const LANG_NAME: Record<string, string> = {
-  rust: "Rust",
-  c: "C",
-  haskell: "Haskell",
-  javascript: "JavaScript",
-  text: "Plain Text",
-};
-
-const TOKEN_RE = /(["'`])(?:\\.|(?!\1).)*?\1|0x[0-9A-Fa-f]+|\d+(?:\.\d+)?F?|[A-Za-z_$][\w$]*|[=!<>+\-*/&|:%^~?]+/g;
-
-interface Token {
-  text: string;
-  cls?: string;
-}
-
-function tokenizeLine(line: string, lang: string): Token[] {
-  const marker = COMMENT_MARKER[lang];
-  if (!marker) return [{ text: line }]; // text 등: 하이라이팅 없이 순수 폰트 감별용
-  const commentIdx = line.indexOf(marker);
-  const code = commentIdx >= 0 ? line.slice(0, commentIdx) : line;
-
-  const tokens: Token[] = [];
-  const keywords = KEYWORDS[lang];
-  let last = 0;
-  for (const m of code.matchAll(TOKEN_RE)) {
-    const start = m.index ?? 0;
-    if (start > last) tokens.push({ text: code.slice(last, start) });
-    const text = m[0];
-    let cls: string | undefined;
-    if (/^["'`]/.test(text)) cls = "tok-string";
-    else if (/^(0x|\d)/.test(text)) cls = "tok-number";
-    else if (/^[A-Za-z_$]/.test(text)) cls = keywords?.has(text) ? "tok-keyword" : undefined;
-    else cls = "tok-op";
-    tokens.push({ text, cls });
-    last = start + text.length;
-  }
-  if (last < code.length) tokens.push({ text: code.slice(last) });
-  if (commentIdx >= 0) tokens.push({ text: line.slice(commentIdx), cls: "tok-comment" });
-  return tokens;
-}
-
-interface LoadedFont {
-  family: string;
-  fileName: string;
-  upem: number | null; // head.unitsPerEm (파싱 실패 시 null)
-}
-
-/** 병합 결과 캐시 항목 — 같은 (A업로드, B업로드, 옵션) 조합은 재병합 없이 복원.
- *  stats는 사이드카가 돌려준 통계(mono)/{mode:"basic"} — 캐시 복원 시 상태바에 재사용. */
-interface MergedEntry {
-  seqA: number;
-  seqB: number;
-  family: string;
-  face: FontFace;
-  bytes: ArrayBuffer;
-  stats: unknown;
-}
-
-type SlotId = "a" | "b";
-
-// 병합 규칙은 언어가 아니라 "우선순위 + 커버리지": 겹치는 글리프는 A가 이기고,
-// B는 A에 없는 나머지 전부를 채운다. 영문→A, 한글→B는 대표 사용례일 뿐.
-const SLOT_INFO: Record<SlotId, { title: string; desc: string }> = {
-  a: { title: "A · 우선 폰트", desc: "겹치는 글리프는 A가 이김 · 보통 영문" },
-  b: { title: "B · 보충 폰트", desc: "A에 없는 글리프 전부 담당 · 보통 한글" },
-};
-
-type MergeMode = "basic" | "mono";
-type Style = "Regular" | "Bold" | "Italic" | "Bold Italic";
-
-/** 일반 병합(basic): fontTools Merger로 A·B를 합치고 라틴을 base가 이긴다. */
-interface BasicOpts {
-  base: "A" | "B";
-  upem: number | null; // null = 자동(더 큰 UPM)
-}
-/** 코딩 폰트(mono): 고정폭 A에 한글 B를 셀에 맞춰 스케일·복사. */
-interface MonoOpts {
-  koreanScale: number; // 0.80–1.40
-  widthMult: number; // 2.0 | 1.5
-  ty: number; // −0.10–0.10 (em)
-  includeHanja: boolean;
-  fullwidth: "A" | "B";
-  jamoCcmp: boolean;
-}
-
-const BASIC_DEFAULTS: BasicOpts = { base: "A", upem: null };
-const MONO_DEFAULTS: MonoOpts = {
-  koreanScale: 1.15,
-  widthMult: 2.0,
-  ty: 0,
-  includeHanja: true,
-  fullwidth: "B",
-  jamoCcmp: true,
-};
-const DEFAULT_NAMES: Record<MergeMode, string> = { basic: "MoeumMerged", mono: "MoeumMono" };
-const STYLES: Style[] = ["Regular", "Bold", "Italic", "Bold Italic"];
-// unitsPerEm 입력의 합리적 양수 범위 — 벗어나면 scale_upem에 깨진 값이 흘러가지 않도록 자동(null)로 폴백.
-const UPEM_MIN = 16;
-const UPEM_MAX = 16384;
-
-/** stats(unknown)에서 숫자만 안전하게 꺼낸다 (문자열·undefined·null → 0) */
-function num(v: unknown): number {
-  return typeof v === "number" ? v : 0;
-}
-
-/** sfnt 테이블 디렉터리에서 head.unitsPerEm(uint16 BE)만 읽는다. 실패 시 null.
- *  FontFace.load()로 이미 검증된 뒤 호출하므로 정상 sfnt가 전제 — 손상 시 null 폴백. */
-function readUnitsPerEm(buffer: ArrayBuffer): number | null {
-  try {
-    const dv = new DataView(buffer);
-    const numTables = dv.getUint16(4); // sfnt 헤더의 numTables
-    for (let i = 0; i < numTables; i++) {
-      const rec = 12 + i * 16; // 테이블 레코드 16바이트씩
-      // 태그 'head' = 0x68656164
-      if (dv.getUint32(rec) === 0x68656164) {
-        const off = dv.getUint32(rec + 8); // head 테이블 오프셋
-        return dv.getUint16(off + 18); // head 안의 unitsPerEm 위치
-      }
-    }
-  } catch {
-    /* 손상/비정상 sfnt → null 폴백 */
-  }
-  return null;
-}
-
-function FontSlot({
-  slot,
-  info,
-  font,
-  error,
-  onFile,
-}: {
-  slot: SlotId;
-  info: { title: string; desc: string };
-  font: LoadedFont | null;
-  error: string | null;
-  onFile: (file: File) => void;
-}) {
-  const [dragOver, setDragOver] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  return (
-    <div
-      className={
-        `slot slot-${slot}` +
-        (dragOver ? " slot-dragover" : "") +
-        (error ? " slot-error" : "") +
-        (font ? " slot-loaded" : "")
-      }
-      onClick={() => inputRef.current?.click()}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setDragOver(true);
-      }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setDragOver(false);
-        const file = e.dataTransfer.files?.[0];
-        if (file) onFile(file);
-      }}
-    >
-      <div className="slot-title">{info.title}</div>
-      <div className="slot-file">
-        {error ?? font?.fileName ?? "TTF 드래그 또는 클릭"}
-      </div>
-      <div className="slot-desc">{info.desc}</div>
-      <input
-        ref={inputRef}
-        type="file"
-        accept=".ttf"
-        style={{ display: "none" }}
-        onChange={(e) => {
-          const file = e.currentTarget.files?.[0];
-          e.currentTarget.value = "";
-          if (file) onFile(file);
-        }}
-      />
-    </div>
-  );
-}
 
 function App() {
   const [fonts, setFonts] = useState<Record<SlotId, LoadedFont | null>>({
@@ -236,7 +44,6 @@ function App() {
   const [sample, setSample] = useState<FontSample>(DEFAULT_SAMPLE);
   const [fontSize, setFontSize] = useState(16);
   const [lineHeight, setLineHeight] = useState(1.6);
-  const [cursor, setCursor] = useState({ ln: 1, col: 1 });
   // 슬롯별로 이전 face를 지우고, 패밀리 이름에 시퀀스를 붙여 캐시 충돌 방지.
   const facesRef = useRef<Record<SlotId, FontFace | null>>({ a: null, b: null });
   const faceSeqRef = useRef(0);
@@ -261,43 +68,8 @@ function App() {
     noticeTimerRef.current = window.setTimeout(() => setNotice(null), 5000);
   }
 
-  // 커서 위치(Ln/Col) 추적 + 현재 줄 하이라이트 — contentEditable은 React가
-  // 자식을 다시 그리면 편집 내용이 깨지므로 클래스는 DOM에 직접 토글한다.
-  useEffect(() => {
-    function onSelectionChange() {
-      const preview = previewRef.current;
-      const sel = document.getSelection();
-      if (!preview || !sel?.anchorNode || !preview.contains(sel.anchorNode)) return;
-
-      let node: Node | null = sel.anchorNode;
-      let lineEl: Node | null = null;
-      while (node && node !== preview) {
-        if (node.parentNode === preview) {
-          lineEl = node;
-          break;
-        }
-        node = node.parentNode;
-      }
-      const lines = Array.from(preview.children);
-      const idx = lineEl ? lines.indexOf(lineEl as Element) : 0;
-      lines.forEach((el, i) => el.classList.toggle("active-line", i === idx));
-      // 하이라이트 span이 있어도 정확한 컬럼: 줄 시작 → 커서까지의 텍스트 길이
-      let col = (sel.anchorOffset ?? 0) + 1;
-      if (lineEl) {
-        try {
-          const range = document.createRange();
-          range.setStart(lineEl, 0);
-          range.setEnd(sel.anchorNode, sel.anchorOffset);
-          col = range.toString().length + 1;
-        } catch {
-          /* 폴백: anchorOffset */
-        }
-      }
-      setCursor({ ln: Math.max(idx, 0) + 1, col });
-    }
-    document.addEventListener("selectionchange", onSelectionChange);
-    return () => document.removeEventListener("selectionchange", onSelectionChange);
-  }, []);
+  // 커서 추적 + active-line 하이라이트(crown A)는 previewRef를 넘겨 훅으로 위임.
+  const { cursor, resetCursor } = useCursorTracking(previewRef);
 
   function clearMerged() {
     // 캐시가 face를 소유하므로 여기서 document.fonts에서 지우지 않는다
@@ -548,39 +320,24 @@ function App() {
   // mono 모드에서 스왑하면 한글 폰트가 고정폭 A 자리로 가 check_monospace에 막힌다 —
   // basic 모드에서만 허용.
   const canSwap = !merging && mode === "basic" && (fonts.a !== null || fonts.b !== null);
-  // 현재 미리보기 중인 병합의 통계. 모드 판정은 stats.mode가 아니라 mergedMode(병합 시점의
-  // mode)로 한다 — get_merge_stats가 실패해 stats가 null이어도 문구가 어긋나지 않는다.
-  const st = stats as Record<string, unknown> | null;
   const baseFont = basicOpts.base === "A" ? fonts.a : fonts.b;
   // basic 모드 unitsPerEm 표시용: 각 폰트 실제 upem과 자동값(= A·B 중 큰 값, Python 규칙과 동일).
   const upemA = fonts.a?.upem ?? null;
   const upemB = fonts.b?.upem ?? null;
   const resolvedUpem = Math.max(upemA ?? 0, upemB ?? 0) || null;
-  const statusText = mergeError
-    ? mergeError
-    : merging
-      ? mode === "mono"
-        ? "코딩 폰트 병합 중… 글리프 스케일·합성"
-        : "병합 중… 첫 병합은 몇 초 걸립니다"
-      : notice
-        ? notice
-        : merged
-          ? mergedMode === "mono"
-            ? `${merged.fileName} · 글리프 ${num(st?.copied)}개 복사` +
-              (num(st?.hanja_copied) ? ` (한자 ${num(st?.hanja_copied)})` : "") +
-              ` · 자동 축소 ${num(st?.capped)}개` +
-              (num(st?.ccmp_rules) ? ` · 자모 ${num(st?.ccmp_rules)}규칙` : "")
-            : `병합 미리보기 — ${merged.fileName} · 라틴 우선: ${baseFont?.fileName ?? `${basicOpts.base} 슬롯`}`
-          : fonts.a && fonts.b
-            ? "A 우선 + B 보충 조합 미리보기 중 (CSS 폴백 근사)"
-            : fonts.a || fonts.b
-              ? "폰트 1개 적용 중 — 나머지 슬롯도 채워보세요"
-              : "우선(A)·보충(B) TTF를 올리면 함께 미리보기됩니다";
-  const statusClass = mergeError
-    ? "sb-item sb-error"
-    : merged || notice
-      ? "sb-item sb-ok"
-      : "sb-item";
+  const { text: statusText, className: statusClass } = buildStatus({
+    mergeError,
+    merging,
+    mode,
+    notice,
+    merged,
+    mergedMode,
+    stats,
+    baseFont,
+    basicOptsBase: basicOpts.base,
+    fontsA: fonts.a,
+    fontsB: fonts.b,
+  });
 
   return (
     <main className="app">
@@ -863,7 +620,7 @@ function App() {
               title={s.label}
               onClick={() => {
                 setSample(s);
-                setCursor({ ln: 1, col: 1 });
+                resetCursor();
               }}
             >
               {s.id === sample.id && (
@@ -908,19 +665,14 @@ function App() {
           </div>
         </div>
 
-        <footer className="statusbar">
-          <span className={statusClass}>{statusText}</span>
-          <span className="sb-right">
-            <span className="sb-item">
-              Ln {cursor.ln}, Col {cursor.col}
-            </span>
-            <span className="sb-item">
-              {fontSize}px · {lineHeight.toFixed(2)}
-            </span>
-            <span className="sb-item">UTF-8</span>
-            <span className="sb-item">{LANG_NAME[sample.lang] ?? sample.lang}</span>
-          </span>
-        </footer>
+        <StatusBar
+          statusText={statusText}
+          statusClass={statusClass}
+          cursor={cursor}
+          fontSize={fontSize}
+          lineHeight={lineHeight}
+          langLabel={LANG_NAME[sample.lang] ?? sample.lang}
+        />
       </section>
     </main>
   );

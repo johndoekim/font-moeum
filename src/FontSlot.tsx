@@ -11,13 +11,15 @@ export function FontSlot({
   onFile,
 }: {
   slot: SlotId;
-  info: { title: string; desc: string };
+  info: { title: string; desc: string; role: string };
   font: LoadedFont | null;
   error: string | null;
   onFile: (file: File) => void;
 }) {
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // 로드됨 = 폰트가 있고 에러가 없을 때만. 에러가 나면 빈/에러 레이아웃으로 돌아가 붉은 문구를 보인다.
+  const loaded = font !== null && !error;
 
   return (
     <div
@@ -25,7 +27,7 @@ export function FontSlot({
         `slot slot-${slot}` +
         (dragOver ? " slot-dragover" : "") +
         (error ? " slot-error" : "") +
-        (font ? " slot-loaded" : "")
+        (loaded ? " slot-loaded" : "")
       }
       onClick={() => inputRef.current?.click()}
       onDragOver={(e) => {
@@ -40,11 +42,23 @@ export function FontSlot({
         if (file) onFile(file);
       }}
     >
-      <div className="slot-title">{info.title}</div>
-      <div className="slot-file">
-        {error ?? font?.fileName ?? "TTF 드래그 또는 클릭"}
-      </div>
-      <div className="slot-desc">{info.desc}</div>
+      {loaded ? (
+        // 로드됨: 슬림 행 — A/B 배지 + 모노 파일명 + 역할·upem
+        <div className="slot-row">
+          <span className="slot-badge">{slot.toUpperCase()}</span>
+          <div className="slot-row-text">
+            <div className="slot-file">{font.fileName}</div>
+            <div className="slot-desc">{`${info.role} · upem ${font.upem ?? "—"}`}</div>
+          </div>
+        </div>
+      ) : (
+        // 빈/에러: 드롭 유도(점선 타일)
+        <>
+          <div className="slot-title">{info.title}</div>
+          <div className="slot-file">{error ?? "TTF 드래그 또는 클릭"}</div>
+          <div className="slot-desc">{info.desc}</div>
+        </>
+      )}
       <input
         ref={inputRef}
         type="file"

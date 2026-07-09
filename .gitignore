@@ -24,6 +24,7 @@ __pycache__/
 CLAUDE.md
 docs/TODO.md
 docs/REFERENCE.md
+docs/design_sample/
 
 # Editor directories and files
 .vscode/*

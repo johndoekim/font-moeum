@@ -11,8 +11,8 @@ const COMMENT_MARKER: Record<string, string> = {
 };
 
 const KEYWORDS: Record<string, Set<string>> = {
-  rust: new Set(["fn", "let", "mut", "while", "if", "else", "return"]),
-  c: new Set(["float", "long", "return"]),
+  rust: new Set(["fn", "let", "mut", "for", "in", "while", "if", "else", "return", "const", "use"]),
+  c: new Set(["float", "long", "const", "return"]),
   javascript: new Set(["const", "return"]),
 };
 

@@ -11,81 +11,99 @@
 
 export interface FontSample {
   id: string;
-  label: string;
+  label: string;      // 한글 설명 — 탭 hover 툴팁·상세용
+  filename: string;    // 탭에 보이는 짧은 파일명(모노) — 에디터 느낌으로 폭을 좁게
   lang: string;   // 신택스 하이라이팅 언어 힌트
   code: string;
 }
 
 export const FONT_SAMPLES: FontSample[] = [
   {
-    id: "rust_merge",
-    label: "병합 함수 (기본값)",
+    id: "preview_rs",
+    label: "병합 미리보기 — 한영 혼용 쇼케이스",
+    filename: "preview.rs",
     lang: "rust",
-    // 셀프 레퍼런셜: 머지 툴 안의 머지 함수. 설명은 코드가 한다.
-    code: `fn merge<T: Ord + Copy>(a: &[T], b: &[T]) -> Vec<T> {
-    let (mut i, mut j) = (0, 0);
-    let mut out = Vec::with_capacity(a.len() + b.len());
-    while i < a.len() && j < b.len() {
-        // 겹치면 왼쪽(A)이 이긴다
-        if a[i] <= b[j] { out.push(a[i]); i += 1; }
-        else            { out.push(b[j]); j += 1; }
-    }
-    out.extend_from_slice(&a[i..]);
-    out.extend_from_slice(&b[j..]);
-    out
-}`,
-  },
-  {
-    id: "quake_rsqrt",
-    label: "고속 역제곱근 (Quake III)",
-    lang: "c",
-    // 게임/그래픽스 개발자 즉시 알아보는 전설의 코드. 매직 넘버 0x5f3759df.
-    // 인라인 주석은 원전(evil floating point bit level hacking)의 번역이라 유지.
-    code: `float Q_rsqrt(float number) {
-    long  i;
-    float x2 = number * 0.5F, y = number;
-    i = * ( long  * ) &y;              // 사악한 부동소수점 비트 해킹
-    i = 0x5f3759df - ( i >> 1 );       // 대체 이게 무슨 마법이지?
-    y = * ( float * ) &i;
-    y = y * ( 1.5F - ( x2 * y * y ) ); // 뉴턴-랩슨 1회 반복
-    return y;
-}`,
-  },
-  {
-    id: "haskell_qsort",
-    label: "우아한 퀵정렬 (Haskell)",
-    lang: "haskell",
-    // 한 줄의 시. 함수형 감성 + 리스트 컴프리헨션의 기호들.
-    code: `-- 하스켈 퀵정렬: 선언적이라 거의 정의를 그대로 옮긴 수준
-quicksort :: Ord a => [a] -> [a]
-quicksort []     = []
-quicksort (p:xs) = quicksort [x | x <- xs, x <  p]  -- 피벗보다 작은 것
-                ++ [p]                              -- 피벗
-                ++ quicksort [x | x <- xs, x >= p]  -- 크거나 같은 것`,
-  },
-  {
-    id: "y_combinator",
-    label: "Y 콤비네이터 (람다 계산법)",
-    lang: "javascript",
-    // 이름 없는 재귀. 화살표(=>)를 대량으로 씀 → 리가처 확인에 최적.
-    code: `// Y 콤비네이터 — 익명 함수만으로 재귀를 만든다 (람다 계산법)
-const Y = f => (x => f(v => x(x)(v)))(x => f(v => x(x)(v)));
+    // 이 툴이 뭘 하는지 코드가 스스로 설명한다: 라틴(A)+한글(B) 혼용, 실제 옵션
+    // 이름(korean_scale·width_mult·ty)과 완성형 범위(0xAC00–0xD7A3)까지 노출.
+    code: `// ── MoeumMono 병합 미리보기 ────────────────────────
+// 영문 A가 라틴·숫자·기호를, 한글 B가 나머지를 그린다.
 
-const fact = Y(self => n => (n <= 1 ? 1 : n * self(n - 1)));
-console.log(fact(5)); // => 120, 이름 없이도 자기 자신을 부른다`,
+fn main() {
+    let latin = "Sphinx of black quartz, judge my vow.";
+    let hangul = "다람쥐 헌 쳇바퀴에 타고파";
+    let mixed = format!("{latin} · {hangul} · 0123456789");
+
+    // 격자 정렬 — 한글은 라틴 딱 2칸 (width_mult = 2.0)
+    for (i, ch) in mixed.chars().enumerate() {
+        if i % 2 == 0 { print!("{ch}"); }
+    }
+
+    let scale = 1.15;    // korean_scale — 셀에 꽉 차게
+    let ty = -0.02;      // 세로 오프셋 (em)
+    let start = 0xAC00;  // '가' — 완성형 시작
+    let end = 0xD7A3;    // '힣' — 완성형 끝
+
+    assert_eq!(end - start + 1, 11172);
+    println!("커버리지 {start:X}..{end:X} 확인");
+}`,
   },
   {
-    id: "glyph_test",
-    label: "글리프 감별 (torture test)",
+    id: "kernel_c",
+    label: "고속 역제곱근 (Quake III)",
+    filename: "kernel.c",
+    // 게임/그래픽스 개발자가 즉시 알아보는 전설의 코드. 매직 넘버 0x5f3759df.
+    lang: "c",
+    code: `// Q_rsqrt — 비트 해킹으로 1/√x 근사
+float Q_rsqrt(float number) {
+    long i;
+    float x2, y;
+    const float threehalfs = 1.5F;
+
+    x2 = number * 0.5F;
+    y  = number;
+    i  = *(long *) &y;            // 비트를 정수로 재해석
+    i  = 0x5f3759df - (i >> 1);   // 마법의 상수
+    y  = *(float *) &i;
+    y  = y * (threehalfs - (x2 * y * y));
+    return y;                     // 뉴턴 1회로 충분
+}`,
+  },
+  {
+    id: "fold_hs",
+    label: "접기와 합성 (Haskell)",
+    filename: "fold.hs",
+    // 함수형 감성 — 한글 주석 + 라틴 코드, 타입 시그니처의 기호들.
+    lang: "haskell",
+    code: `-- 접기와 합성 — 한글 주석, 라틴 코드
+sumTo :: Int -> Int
+sumTo n = foldr (+) 0 [1..n]
+
+-- 평균: 합계를 길이로 나눈다
+mean :: [Double] -> Double
+mean xs = sum xs / fromIntegral (length xs)
+
+main :: IO ()
+main = print (mean [1.0, 1.5, 2.0])  -- 1.5`,
+  },
+  {
+    id: "pangram_txt",
+    label: "팬그램 · 글리프 감별",
+    filename: "pangram.txt",
+    // 팬그램(영/한) + 숫자·통화 + 감별 글자 + 리가처 후보 대량 라인을 한 화면에.
     lang: "text",
-    // 있어보이는 용도 아님 — 순수하게 폰트를 괴롭혀 차이를 드러내는 용도.
-    code: `모호한 글자   0O0 oO · 1lI| · rn/m · cl/d · B8 · 5S · 2Z · G6
-따옴표/기호    'quote' \`tick\` "double" · ~-_ · {}[]() · <>/\\ · @#$%^&*
-리가처 후보    => -> <- == === != !== >= <= |> <| :: ++ -- // /* */ && ||
-한영 혼용      안녕하세요 Hello 반갑습니다 World 한글과 English 123 混用
-연속 한글      가나다라마바사 아자차카타파하 · 곬 없 뷁 쏵 (받침 조합)`,
+    code: `The quick brown fox jumps over the lazy dog.
+Pack my box with five dozen liquor jugs.
+
+다람쥐 헌 쳇바퀴에 타고파
+키스의 고유조건은 입술끼리 만나야 하고
+정 참판 양반댁 규수 큰 교자 타고 혼례 치른 날
+
+0123456789 ₩1,234,567 3.141592
+il1I|! oO0 {}[]()<> · rn/m cl/d B8 5S 2Z G6
+=> -> <- == === != !== >= <= |> <| :: ++ -- // /* */ && ||
+「모음」 — 영문과 한글이 한 폰트처럼`,
   },
 ];
 
-/** 기본으로 보여줄 샘플 (병합 함수 = 셀프 레퍼런셜 + 한영 혼용) */
+/** 기본으로 보여줄 샘플 (preview.rs = MoeumMono 병합 미리보기 쇼케이스) */
 export const DEFAULT_SAMPLE = FONT_SAMPLES[0];

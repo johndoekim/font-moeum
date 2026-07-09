@@ -21,6 +21,11 @@
   --accent-hover: color-mix(in srgb, var(--purple) 12%, transparent); /* 버튼 호버 */
   --accent-active: color-mix(in srgb, var(--purple) 15%, transparent); /* 활성/선택 */
   --line-highlight: color-mix(in srgb, var(--line) 32%, transparent); /* 현재 줄 */
+
+  /* UI 모노 강조(파일명·수치·배지) — CDN 없이 시스템 폰트 스택 */
+  --mono: "Cascadia Code", Consolas, "D2Coding", "Nanum Gothic Coding", "Malgun Gothic", monospace;
+  --badge-a: color-mix(in srgb, var(--pink) 16%, transparent); /* A 배지 배경 */
+  --badge-b: color-mix(in srgb, var(--cyan) 16%, transparent); /* B 배지 배경 */
 }
 
 * {
@@ -53,21 +58,103 @@ body {
   background: var(--panel);
   border-right: 1px solid var(--darker);
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+.sidebar::-webkit-scrollbar {
+  width: 10px;
+}
+
+.sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.sidebar::-webkit-scrollbar-thumb:hover {
+  background: var(--comment);
+  background-clip: padding-box;
 }
 
 .sidebar-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 2px;
   color: var(--comment);
 }
 
-.section-label {
-  margin-top: 8px;
-  font-size: 11px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
+.app-version {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--line);
+}
+
+/* ── 접이식 사이드바 섹션 (VS Code 탐색기 그룹) ─────────────────── */
+
+.sb-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.sb-section-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+}
+
+.sb-section-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0;
+  border: none;
+  background: none;
   color: var(--comment);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sb-section-toggle:hover {
+  color: var(--fg);
+}
+
+.sb-chevron {
+  width: 10px;
+  flex-shrink: 0;
+  font-size: 9px;
+}
+
+.sb-section-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.sb-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 0 4px 12px;
 }
 
 .slot {
@@ -90,15 +177,67 @@ body {
 }
 
 .slot-loaded {
-  border-style: solid;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 6px;
 }
 
 .slot-a.slot-loaded {
-  border-color: var(--pink);
+  border-left-color: var(--pink);
 }
 
 .slot-b.slot-loaded {
-  border-color: var(--cyan);
+  border-left-color: var(--cyan);
+}
+
+/* 로드된 슬롯 = 슬림 행: A/B 배지 + 모노 파일명 + 역할·upem */
+.slot-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.slot-row-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.slot-badge {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.slot-a .slot-badge {
+  color: var(--pink);
+  background: var(--badge-a);
+}
+
+.slot-b .slot-badge {
+  color: var(--cyan);
+  background: var(--badge-b);
+}
+
+.slot-loaded .slot-file {
+  margin-bottom: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg);
+}
+
+.slot-loaded .slot-desc {
+  font-variant-numeric: tabular-nums;
 }
 
 .slot-a .slot-title {
@@ -136,25 +275,30 @@ body {
   color: var(--comment);
 }
 
-.swap-button {
-  align-self: center;
-  padding: 4px 14px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--panel);
+/* 슬롯 헤더 안의 ⇅ 스왑 아이콘 버튼 */
+.swap-icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
   color: var(--comment);
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
   user-select: none;
 }
 
-.swap-button:hover:not(:disabled) {
+.swap-icon:hover:not(:disabled) {
   color: var(--fg);
-  border-color: var(--comment);
+  background: var(--accent-hover);
 }
 
-.swap-button:disabled {
-  opacity: 0.4;
+.swap-icon:disabled {
+  opacity: 0.35;
   cursor: default;
 }
 
@@ -251,28 +395,10 @@ body {
   font-weight: 600;
 }
 
-/* 고급 설정 토글 + 접히는 패널 */
-.advanced-toggle {
-  align-self: flex-start;
-  padding: 2px 0;
-  border: none;
-  background: none;
-  color: var(--comment);
-  font-size: 12px;
-  cursor: pointer;
-  user-select: none;
-}
-
-.advanced-toggle:hover {
-  color: var(--fg);
-}
-
-.advanced-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 4px 0 4px 10px;
-  border-left: 2px solid var(--line);
+/* 모드 세그먼트(일반/코딩 폰트) — 아래 세부 옵션과 구분선으로 분리 */
+.seg-mode {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
 }
 
 /* select — name-input과 같은 톤 */
@@ -305,14 +431,6 @@ body {
 .check-row input[type="checkbox"] {
   accent-color: var(--purple);
   cursor: pointer;
-}
-
-/* 고정폭 코딩 폰트 토글 — 고급 패널 최상단, 아래 세부 옵션과 구분 */
-.check-row-mode {
-  color: var(--fg);
-  font-weight: 600;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--line);
 }
 
 /* 에러 바운더리 폴백 — 핸들러/렌더 예외 시 앱 전체 블랭크 대신 원인 표시 */
@@ -444,9 +562,11 @@ body {
 .tab {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  font-size: 13px;
+  gap: 7px;
+  height: 35px;
+  padding: 0 12px;
+  font-family: var(--mono);
+  font-size: 11.5px;
   color: var(--comment);
   border-right: 1px solid var(--darker);
   cursor: pointer;
@@ -572,6 +692,37 @@ body {
   color: var(--comment);
   flex-shrink: 0;
   user-select: none;
+}
+
+.sb-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.sb-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--line);
+}
+
+.sb-dot-ok {
+  background: var(--green);
+}
+
+.sb-dot-error {
+  background: var(--red);
+}
+
+.sb-dot-preview {
+  background: var(--purple);
+}
+
+.sb-dot-idle {
+  background: var(--line);
 }
 
 .sb-item {

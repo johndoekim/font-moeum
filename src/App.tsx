@@ -66,6 +66,7 @@ function tokenizeLine(line: string, lang: string): Token[] {
 interface LoadedFont {
   family: string;
   fileName: string;
+  upem: number | null; // head.unitsPerEm (파싱 실패 시 null)
 }
 
 /** 병합 결과 캐시 항목 — 같은 (A업로드, B업로드, 옵션) 조합은 재병합 없이 복원.
@@ -124,6 +125,26 @@ const UPEM_MAX = 16384;
 /** stats(unknown)에서 숫자만 안전하게 꺼낸다 (문자열·undefined·null → 0) */
 function num(v: unknown): number {
   return typeof v === "number" ? v : 0;
+}
+
+/** sfnt 테이블 디렉터리에서 head.unitsPerEm(uint16 BE)만 읽는다. 실패 시 null.
+ *  FontFace.load()로 이미 검증된 뒤 호출하므로 정상 sfnt가 전제 — 손상 시 null 폴백. */
+function readUnitsPerEm(buffer: ArrayBuffer): number | null {
+  try {
+    const dv = new DataView(buffer);
+    const numTables = dv.getUint16(4); // sfnt 헤더의 numTables
+    for (let i = 0; i < numTables; i++) {
+      const rec = 12 + i * 16; // 테이블 레코드 16바이트씩
+      // 태그 'head' = 0x68656164
+      if (dv.getUint32(rec) === 0x68656164) {
+        const off = dv.getUint32(rec + 8); // head 테이블 오프셋
+        return dv.getUint16(off + 18); // head 안의 unitsPerEm 위치
+      }
+    }
+  } catch {
+    /* 손상/비정상 sfnt → null 폴백 */
+  }
+  return null;
 }
 
 function FontSlot({
@@ -201,6 +222,9 @@ function App() {
   const [style, setStyle] = useState<Style>("Regular");
   // 모드별 옵션을 분리 보존 — 모드를 오가도 각자 값이 남는다.
   const [basicOpts, setBasicOpts] = useState<BasicOpts>(BASIC_DEFAULTS);
+  // unitsPerEm 입력의 "날 텍스트" — basicOpts.upem(검증된 모델값)과 분리해야 타이핑이 막히지 않는다.
+  // (컨트롤드 인풋을 매 키 입력마다 범위검증→null로 되돌리면 16 미만 중간값이 지워져 입력 불가)
+  const [upemText, setUpemText] = useState(BASIC_DEFAULTS.upem == null ? "" : String(BASIC_DEFAULTS.upem));
   const [monoOpts, setMonoOpts] = useState<MonoOpts>(MONO_DEFAULTS);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   // 옵션을 바꾸면 자동으로 다시 병합할지 — 이 툴의 재조정 루프. 끄면 병합 버튼으로 수동 적용.
@@ -298,7 +322,8 @@ function App() {
       if (prev) document.fonts.delete(prev);
       document.fonts.add(face);
       facesRef.current[slot] = face;
-      setFonts((prevFonts) => ({ ...prevFonts, [slot]: { family, fileName: file.name } }));
+      const upem = readUnitsPerEm(buffer);
+      setFonts((prevFonts) => ({ ...prevFonts, [slot]: { family, fileName: file.name, upem } }));
       setErrors((prevErrors) => ({ ...prevErrors, [slot]: null }));
       clearMerged();
       // 병합용으로 Rust에 바이트 업로드 (웹뷰는 파일 경로를 모르므로)
@@ -365,7 +390,7 @@ function App() {
     if (cached) {
       try {
         await invoke("set_merged", new Uint8Array(cached.bytes)); // export 대상 동기화
-        setMerged({ family: cached.family, fileName: name });
+        setMerged({ family: cached.family, fileName: name, upem: null }); // 병합 결과는 소스 upem 개념 없음
         setStats(cached.stats);
         setMergedMode(mode);
         lastMergedKeyRef.current = key;
@@ -392,7 +417,7 @@ function App() {
         bytes: data,
         stats,
       });
-      setMerged({ family, fileName: name });
+      setMerged({ family, fileName: name, upem: null }); // 병합 결과는 소스 upem 개념 없음
       setStats(stats);
       setMergedMode(mode);
       lastMergedKeyRef.current = key;
@@ -527,6 +552,10 @@ function App() {
   // mode)로 한다 — get_merge_stats가 실패해 stats가 null이어도 문구가 어긋나지 않는다.
   const st = stats as Record<string, unknown> | null;
   const baseFont = basicOpts.base === "A" ? fonts.a : fonts.b;
+  // basic 모드 unitsPerEm 표시용: 각 폰트 실제 upem과 자동값(= A·B 중 큰 값, Python 규칙과 동일).
+  const upemA = fonts.a?.upem ?? null;
+  const upemB = fonts.b?.upem ?? null;
+  const resolvedUpem = Math.max(upemA ?? 0, upemB ?? 0) || null;
   const statusText = mergeError
     ? mergeError
     : merging
@@ -622,18 +651,24 @@ function App() {
                   </div>
                 </div>
                 <label className="control">
-                  <span>unitsPerEm</span>
+                  <span title="폰트 좌표 해상도 — 1em을 몇 단위로 나누는지. 비우면 A·B 중 큰 값으로 자동.">
+                    unitsPerEm
+                  </span>
+                  <span className="control-hint">
+                    {`A ${upemA ?? "—"} · B ${upemB ?? "—"}`}
+                  </span>
                   <input
                     className="name-input"
                     type="number"
                     spellCheck={false}
-                    placeholder="자동(큰 값)"
-                    value={basicOpts.upem ?? ""}
+                    placeholder={resolvedUpem ? `자동 · ${resolvedUpem}` : "자동(큰 값)"}
+                    value={upemText}
                     onChange={(e) => {
-                      const v = e.currentTarget.value.trim();
-                      const n = Number(v);
-                      // 빈칸은 자동(null), 숫자로 안 읽히는 쓰레기 입력·범위 밖 값도 자동으로 폴백.
-                      const valid = v !== "" && Number.isFinite(n) && n >= UPEM_MIN && n <= UPEM_MAX;
+                      const v = e.currentTarget.value;
+                      setUpemText(v); // 텍스트는 그대로 보존 → 타이핑 중 지워지지 않음
+                      const n = Number(v.trim());
+                      // 빈칸·비숫자·범위 밖은 병합에선 자동(null)로 폴백. 단 입력칸 텍스트는 유지.
+                      const valid = v.trim() !== "" && Number.isFinite(n) && n >= UPEM_MIN && n <= UPEM_MAX;
                       setBasicOpts((o) => ({ ...o, upem: valid ? n : null }));
                     }}
                   />

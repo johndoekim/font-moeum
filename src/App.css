@@ -199,6 +199,12 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.control-hint {
+  font-size: 11px;
+  color: var(--comment);
+  font-variant-numeric: tabular-nums;
+}
+
 .control input[type="range"] {
   width: 100%;
   accent-color: var(--purple);

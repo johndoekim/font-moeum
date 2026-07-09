@@ -204,6 +204,166 @@ body {
   accent-color: var(--purple);
 }
 
+/* ── 병합 모드·고급 패널·스타일 컨트롤 ───────────────────────── */
+
+/* 세그먼트 컨트롤 — 모드 선택 · A/B 토글 공용 */
+.segmented {
+  display: flex;
+  gap: 4px;
+}
+
+.segmented button {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--comment);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s, color 0.15s, background-color 0.15s;
+}
+
+.segmented button:hover:not(.seg-active) {
+  color: var(--fg);
+  border-color: var(--comment);
+}
+
+.segmented button.seg-active {
+  border-color: var(--purple);
+  background: rgba(189, 147, 249, 0.15);
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* 고급 설정 토글 + 접히는 패널 */
+.advanced-toggle {
+  align-self: flex-start;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--comment);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.advanced-toggle:hover {
+  color: var(--fg);
+}
+
+.advanced-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 0 4px 10px;
+  border-left: 2px solid var(--line);
+}
+
+/* select — name-input과 같은 톤 */
+.select-input {
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+}
+
+.select-input:focus {
+  border-color: var(--purple);
+}
+
+/* 체크박스 행 — 라벨 + 체크박스 가로 정렬 */
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--comment);
+  cursor: pointer;
+  user-select: none;
+}
+
+.check-row input[type="checkbox"] {
+  accent-color: var(--purple);
+  cursor: pointer;
+}
+
+/* 고정폭 코딩 폰트 토글 — 고급 패널 최상단, 아래 세부 옵션과 구분 */
+.check-row-mode {
+  color: var(--fg);
+  font-weight: 600;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* 에러 바운더리 폴백 — 핸들러/렌더 예외 시 앱 전체 블랭크 대신 원인 표시 */
+.error-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: flex-start;
+  max-width: 640px;
+  margin: 12vh auto;
+  padding: 0 24px;
+}
+
+.error-fallback h1 {
+  margin: 0;
+  font-size: 18px;
+  color: var(--red);
+}
+
+.error-fallback pre {
+  width: 100%;
+  margin: 0;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
+.error-fallback button {
+  padding: 8px 18px;
+  border: 1px solid var(--purple);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--purple);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.error-fallback button:hover {
+  background: rgba(189, 147, 249, 0.12);
+}
+
+/* 기본값 복원 — 작은 텍스트 버튼 */
+.reset-button {
+  align-self: flex-start;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--comment);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.reset-button:hover {
+  color: var(--pink);
+}
+
 .merge-button {
   display: inline-flex;
   align-items: center;
@@ -228,6 +388,11 @@ body {
   background: var(--line);
   color: var(--comment);
   cursor: default;
+}
+
+/* 자동 재병합 꺼짐 + 옵션 변경으로 미리보기가 옛 결과일 때 — 재병합 유도 */
+.merge-button-stale {
+  background: var(--pink);
 }
 
 .spinner {

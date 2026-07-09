@@ -6,9 +6,20 @@
 프로토콜 (한 줄 = 한 메시지, UTF-8):
   → {"cmd": "ping"}
   ← {"ok": true, "fonttools": "4.63.0"}
-  → {"cmd": "merge", "font_a": "...", "font_b": "...", "output": "...",
-     "name": "MoeumMerged", "base": "A"}
-  ← {"ok": true, "path": "...", "elapsed": 2.8}   (실패 시 {"ok": false, "error": "..."})
+
+  → {"cmd": "merge", "mode": "basic", "font_a": "...", "font_b": "...", "output": "...",
+     "name": "MoeumMerged", "base": "A", "upem": null, "style": "Regular"}
+  ← {"ok": true, "path": "...", "elapsed": 2.8, "stats": {"mode": "basic"}}
+     (mode 없으면 "basic"과 동일 — 하위호환. 실패 시 {"ok": false, "error": "..."})
+
+  → {"cmd": "merge", "mode": "mono", "font_a": "...", "font_b": "...", "output": "...",
+     "name": "MoeumMono", "style": "Regular", "korean_scale": 1.15, "width_mult": 2.0,
+     "ty": 0.0, "include_hanja": true, "fullwidth_source": "B", "jamo_ccmp": true}
+  ← {"ok": true, "path": "...", "elapsed": 1.9,
+     "stats": {"mode": "mono", "copied": 123, "capped": 0, "glyphs_added": 123,
+               "latin_advance": 600, "korean_advance": 1200, "upem": 1000,
+               "hanja_copied": 4888, "ccmp_rules": 40, "warnings": []}}
+
   → {"cmd": "quit"}                                (응답 없이 종료; stdin EOF도 동일)
 """
 
@@ -18,11 +29,41 @@ import time
 
 from fontTools import version as fonttools_version
 
+from fitmerge import fit_merge_to_file
 from merge import MergeError, merge_to_file
+
 
 sys.stdin.reconfigure(encoding="utf-8")
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
+
+
+def _merge_basic(req: dict) -> dict:
+    out = merge_to_file(
+        req["font_a"], req["font_b"], req["output"],
+        name=req.get("name", "MoeumMerged"),
+        base=req.get("base", "A"),
+        upem=req.get("upem"),
+        style=req.get("style", "Regular"),
+    )
+    return {"path": str(out), "stats": {"mode": "basic"}}
+
+
+def _merge_mono(req: dict) -> dict:
+    result = fit_merge_to_file(
+        req["font_a"], req["font_b"], req["output"],
+        name=req.get("name", "MoeumMono"),
+        style=req.get("style", "Regular"),
+        korean_scale=req.get("korean_scale", 1.15),
+        width_mult=req.get("width_mult", 2.0),
+        ty=req.get("ty", 0.0),
+        include_hanja=req.get("include_hanja", True),
+        fullwidth_source=req.get("fullwidth_source", "B"),
+        jamo_ccmp=req.get("jamo_ccmp", True),
+    )
+    path = result.pop("path")
+    stats = {"mode": "mono", **result}
+    return {"path": path, "stats": stats}
 
 
 def handle(req: dict):
@@ -30,14 +71,20 @@ def handle(req: dict):
     if cmd == "ping":
         return {"ok": True, "fonttools": fonttools_version}
     if cmd == "merge":
+        mode = req.get("mode", "basic")
         t0 = time.perf_counter()
-        out = merge_to_file(
-            req["font_a"], req["font_b"], req["output"],
-            name=req.get("name", "MoeumMerged"),
-            base=req.get("base", "A"),
-            upem=req.get("upem"),
-        )
-        return {"ok": True, "path": str(out), "elapsed": round(time.perf_counter() - t0, 2)}
+        if mode == "basic":
+            result = _merge_basic(req)
+        elif mode == "mono":
+            result = _merge_mono(req)
+        else:
+            return {"ok": False, "error": f"알 수 없는 병합 모드: {mode}"}
+        return {
+            "ok": True,
+            "path": result["path"],
+            "elapsed": round(time.perf_counter() - t0, 2),
+            "stats": result["stats"],
+        }
     if cmd == "quit":
         return None
     return {"ok": False, "error": f"알 수 없는 명령: {cmd}"}

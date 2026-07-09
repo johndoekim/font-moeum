@@ -2,6 +2,7 @@
    사이드바 · 탭바 · 줄번호 거터 · 현재 줄 하이라이트 · 상태바 */
 :root {
   color-scheme: dark;
+  /* 팔레트 (원시 토큰) — Dracula */
   --bg: #282a36;
   --panel: #21222c;
   --darker: #191a21;
@@ -13,6 +14,13 @@
   --cyan: #8be9fd;
   --green: #50fa7b;
   --red: #ff5555;
+  --yellow: #f1fa8c; /* 문자열 토큰 색 (Dracula yellow) */
+
+  /* 파생 토큰 — 반투명 틴트 (base 색을 color-mix로 따라감) */
+  --accent-soft: color-mix(in srgb, var(--purple) 8%, transparent); /* 드래그오버 */
+  --accent-hover: color-mix(in srgb, var(--purple) 12%, transparent); /* 버튼 호버 */
+  --accent-active: color-mix(in srgb, var(--purple) 15%, transparent); /* 활성/선택 */
+  --line-highlight: color-mix(in srgb, var(--line) 32%, transparent); /* 현재 줄 */
 }
 
 * {
@@ -78,7 +86,7 @@ body {
 
 .slot-dragover {
   border-color: var(--purple);
-  background: rgba(189, 147, 249, 0.08);
+  background: var(--accent-soft);
 }
 
 .slot-loaded {
@@ -176,7 +184,7 @@ body {
 }
 
 .export-button:hover:not(:disabled) {
-  background: rgba(189, 147, 249, 0.12);
+  background: var(--accent-hover);
 }
 
 .export-button:disabled {
@@ -238,7 +246,7 @@ body {
 
 .segmented button.seg-active {
   border-color: var(--purple);
-  background: rgba(189, 147, 249, 0.15);
+  background: var(--accent-active);
   color: var(--fg);
   font-weight: 600;
 }
@@ -350,7 +358,7 @@ body {
 }
 
 .error-fallback button:hover {
-  background: rgba(189, 147, 249, 0.12);
+  background: var(--accent-hover);
 }
 
 /* 기본값 복원 — 작은 텍스트 버튼 */
@@ -504,7 +512,7 @@ body {
 }
 
 .preview > div.active-line {
-  background: rgba(68, 71, 90, 0.32); /* 현재 줄 하이라이트 */
+  background: var(--line-highlight); /* 현재 줄 하이라이트 */
 }
 
 .preview > div.active-line::before {
@@ -517,7 +525,7 @@ body {
 }
 
 .tok-string {
-  color: #f1fa8c;
+  color: var(--yellow);
 }
 
 .tok-number {

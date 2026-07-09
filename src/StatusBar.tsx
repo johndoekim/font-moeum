@@ -1,8 +1,11 @@
-// 하단 상태바 — 순수 표현 leaf. 상태 문구/클래스는 App이 buildStatus로 파생해 넘겨주므로
+import type { StatusDot } from "./status";
+
+// 하단 상태바 — 순수 표현 leaf. 상태 문구/클래스/점 색은 App이 buildStatus로 파생해 넘겨주므로
 // crown-jewel 로직이 이 경계를 넘지 않는다.
 export function StatusBar({
   statusText,
   statusClass,
+  dot,
   cursor,
   fontSize,
   lineHeight,
@@ -10,6 +13,7 @@ export function StatusBar({
 }: {
   statusText: string;
   statusClass: string;
+  dot: StatusDot;
   cursor: { ln: number; col: number };
   fontSize: number;
   lineHeight: number;
@@ -17,7 +21,10 @@ export function StatusBar({
 }) {
   return (
     <footer className="statusbar">
-      <span className={statusClass}>{statusText}</span>
+      <span className="sb-status">
+        <span className={`sb-dot sb-dot-${dot}`} />
+        <span className={statusClass}>{statusText}</span>
+      </span>
       <span className="sb-right">
         <span className="sb-item">
           Ln {cursor.ln}, Col {cursor.col}

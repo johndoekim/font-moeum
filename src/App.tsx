@@ -8,9 +8,13 @@ import { readUnitsPerEm } from "./fontUtils";
 import { buildStatus } from "./status";
 import { tokenizeLine, LANG_NAME } from "./syntax";
 import { FontSlot } from "./FontSlot";
+import { SidebarSection } from "./SidebarSection";
 import { useCursorTracking } from "./useCursorTracking";
 import { StatusBar } from "./StatusBar";
 import "./App.css";
+
+// 헤더 버전 배지 — package.json/tauri.conf의 실제 버전과 맞춘 상수(외부 JSON import 회피).
+const APP_VERSION = "0.1.0";
 
 function App() {
   const [fonts, setFonts] = useState<Record<SlotId, LoadedFont | null>>({
@@ -34,7 +38,10 @@ function App() {
   // (컨트롤드 인풋을 매 키 입력마다 범위검증→null로 되돌리면 16 미만 중간값이 지워져 입력 불가)
   const [upemText, setUpemText] = useState(BASIC_DEFAULTS.upem == null ? "" : String(BASIC_DEFAULTS.upem));
   const [monoOpts, setMonoOpts] = useState<MonoOpts>(MONO_DEFAULTS);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  // 사이드바 섹션 접힘 상태 — 순수 UI(값은 App이 소유하므로 접어도 컨트롤 값·자동 재병합 불변).
+  // 전부 기본 펼침: 출력을 접으면 병합/저장 버튼이 사라지므로 첫 화면은 열어둔다.
+  const [open, setOpen] = useState({ slots: true, options: true, preview: true, output: true });
+  const toggleSection = (k: keyof typeof open) => setOpen((o) => ({ ...o, [k]: !o[k] }));
   // 옵션을 바꾸면 자동으로 다시 병합할지 — 이 툴의 재조정 루프. 끄면 병합 버튼으로 수동 적용.
   const [autoMerge, setAutoMerge] = useState(true);
   const [stats, setStats] = useState<unknown>(null); // 현재 미리보기 병합의 사이드카 통계
@@ -325,7 +332,7 @@ function App() {
   const upemA = fonts.a?.upem ?? null;
   const upemB = fonts.b?.upem ?? null;
   const resolvedUpem = Math.max(upemA ?? 0, upemB ?? 0) || null;
-  const { text: statusText, className: statusClass } = buildStatus({
+  const { text: statusText, className: statusClass, dot: statusDot } = buildStatus({
     mergeError,
     merging,
     mode,
@@ -342,273 +349,301 @@ function App() {
   return (
     <main className="app">
       <aside className="sidebar">
-        <div className="sidebar-header">FONT MOEUM</div>
+        <div className="sidebar-header">
+          <span>FONT MOEUM</span>
+          <span className="app-version">v{APP_VERSION}</span>
+        </div>
 
-        <div className="section-label">폰트 슬롯</div>
-        <FontSlot
-          slot="a"
-          info={SLOT_INFO.a}
-          font={fonts.a}
-          error={errors.a}
-          onFile={(file) => loadFontFile("a", file)}
-        />
-        <button
-          className="swap-button"
-          disabled={!canSwap}
-          onClick={swapSlots}
-          title={
-            mode === "mono"
-              ? "코딩 폰트 모드에선 A=고정폭 영문 고정 — 스왑 불가"
-              : "A와 B를 맞바꿔 누가 라틴을 이길지 바꿉니다"
+        <SidebarSection
+          title="폰트 슬롯"
+          open={open.slots}
+          onToggle={() => toggleSection("slots")}
+          actions={
+            <button
+              type="button"
+              className="swap-icon"
+              disabled={!canSwap}
+              onClick={swapSlots}
+              aria-label="A/B 스왑"
+              title={
+                mode === "mono"
+                  ? "코딩 폰트 모드에선 A=고정폭 영문 고정 — 스왑 불가"
+                  : "A와 B를 맞바꿔 누가 라틴을 이길지 바꿉니다"
+              }
+            >
+              ⇅
+            </button>
           }
         >
-          ⇅ A/B 스왑
-        </button>
-        <FontSlot
-          slot="b"
-          info={SLOT_INFO.b}
-          font={fonts.b}
-          error={errors.b}
-          onFile={(file) => loadFontFile("b", file)}
-        />
+          <FontSlot
+            slot="a"
+            info={SLOT_INFO.a}
+            font={fonts.a}
+            error={errors.a}
+            onFile={(file) => loadFontFile("a", file)}
+          />
+          <FontSlot
+            slot="b"
+            info={SLOT_INFO.b}
+            font={fonts.b}
+            error={errors.b}
+            onFile={(file) => loadFontFile("b", file)}
+          />
+        </SidebarSection>
 
-        <button
-          className="advanced-toggle"
-          onClick={() => setAdvancedOpen((o) => !o)}
+        <SidebarSection
+          title="병합 옵션"
+          open={open.options}
+          onToggle={() => toggleSection("options")}
         >
-          {advancedOpen ? "▾ 고급 설정" : "▸ 고급 설정"}
-        </button>
-        {advancedOpen && (
-          <div className="advanced-panel">
-            <label
-              className="check-row check-row-mode"
+          <div className="segmented seg-mode">
+            <button
+              type="button"
+              className={mode === "basic" ? "seg-active" : ""}
+              onClick={() => switchMode("basic")}
+              title="A·B를 합쳐 라틴을 우선 폰트가 이긴다 — 일반 병합"
+            >
+              일반
+            </button>
+            <button
+              type="button"
+              className={mode === "mono" ? "seg-active" : ""}
+              onClick={() => switchMode("mono")}
               title="영문 고정폭 폰트에 한글을 셀(2칸)에 맞춰 스케일 — 터미널·에디터 격자 정렬용"
             >
-              <input
-                type="checkbox"
-                checked={mode === "mono"}
-                onChange={(e) => switchMode(e.currentTarget.checked ? "mono" : "basic")}
-              />
-              <span>고정폭 코딩 폰트로 만들기</span>
-            </label>
-            {mode === "basic" ? (
-              <>
-                <div className="control">
-                  <span title="겹치는 라틴·숫자·문장부호를 가질 폰트">라틴 우선</span>
-                  <div className="segmented">
-                    {(["A", "B"] as const).map((b) => (
-                      <button
-                        key={b}
-                        className={basicOpts.base === b ? "seg-active" : ""}
-                        onClick={() => setBasicOpts((o) => ({ ...o, base: b }))}
-                      >
-                        {b}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <label className="control">
-                  <span title="폰트 좌표 해상도 — 1em을 몇 단위로 나누는지. 비우면 A·B 중 큰 값으로 자동.">
-                    unitsPerEm
-                  </span>
-                  <span className="control-hint">
-                    {`A ${upemA ?? "—"} · B ${upemB ?? "—"}`}
-                  </span>
-                  <input
-                    className="name-input"
-                    type="number"
-                    spellCheck={false}
-                    placeholder={resolvedUpem ? `자동 · ${resolvedUpem}` : "자동(큰 값)"}
-                    value={upemText}
-                    onChange={(e) => {
-                      const v = e.currentTarget.value;
-                      setUpemText(v); // 텍스트는 그대로 보존 → 타이핑 중 지워지지 않음
-                      const n = Number(v.trim());
-                      // 빈칸·비숫자·범위 밖은 병합에선 자동(null)로 폴백. 단 입력칸 텍스트는 유지.
-                      const valid = v.trim() !== "" && Number.isFinite(n) && n >= UPEM_MIN && n <= UPEM_MAX;
-                      setBasicOpts((o) => ({ ...o, upem: valid ? n : null }));
-                    }}
-                  />
-                </label>
-              </>
-            ) : (
-              <>
-                <label className="control">
-                  <span>
-                    한글 스케일 <b>{monoOpts.koreanScale.toFixed(2)}</b>
-                  </span>
-                  <input
-                    type="range"
-                    min={0.8}
-                    max={1.4}
-                    step={0.01}
-                    value={monoOpts.koreanScale}
-                    onChange={(e) => {
-                      // 이벤트 값은 반드시 업데이터 밖에서 읽는다 — React가 핸들러 종료 후
-                      // e.currentTarget을 null로 회수하므로 업데이터 안에서 읽으면 크래시.
-                      const v = Number(e.currentTarget.value);
-                      setMonoOpts((o) => ({ ...o, koreanScale: v }));
-                    }}
-                  />
-                </label>
-                <label className="control">
-                  <span>폭 배수</span>
-                  <select
-                    className="select-input"
-                    value={monoOpts.widthMult}
-                    onChange={(e) => {
-                      const v = Number(e.currentTarget.value);
-                      setMonoOpts((o) => ({ ...o, widthMult: v }));
-                    }}
-                  >
-                    <option value={2.0}>2.0 (라틴 2칸)</option>
-                    <option value={1.5}>1.5</option>
-                  </select>
-                </label>
-                <label className="control">
-                  <span>
-                    세로 오프셋{" "}
-                    <b>
-                      {monoOpts.ty >= 0 ? "+" : ""}
-                      {monoOpts.ty.toFixed(2)}em
-                    </b>
-                  </span>
-                  <input
-                    type="range"
-                    min={-0.1}
-                    max={0.1}
-                    step={0.01}
-                    value={monoOpts.ty}
-                    onChange={(e) => {
-                      const v = Number(e.currentTarget.value);
-                      setMonoOpts((o) => ({ ...o, ty: v }));
-                    }}
-                  />
-                </label>
-                <label className="check-row" title="한자(U+4E00–9FFF) 복사 — 끄면 파일이 작아짐">
-                  <input
-                    type="checkbox"
-                    checked={monoOpts.includeHanja}
-                    onChange={(e) => {
-                      const checked = e.currentTarget.checked;
-                      setMonoOpts((o) => ({ ...o, includeHanja: checked }));
-                    }}
-                  />
-                  <span>한자 포함</span>
-                </label>
-                <div className="control">
-                  <span title="전각·CJK 구두점(U+3000·FF00–)을 가질 폰트">전각 담당</span>
-                  <div className="segmented">
-                    {(["A", "B"] as const).map((f) => (
-                      <button
-                        key={f}
-                        className={monoOpts.fullwidth === f ? "seg-active" : ""}
-                        onClick={() => setMonoOpts((o) => ({ ...o, fullwidth: f }))}
-                      >
-                        {f}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <label className="check-row" title="조합형 자모를 완성형으로 합성(GSUB ccmp)">
-                  <input
-                    type="checkbox"
-                    checked={monoOpts.jamoCcmp}
-                    onChange={(e) => {
-                      const checked = e.currentTarget.checked;
-                      setMonoOpts((o) => ({ ...o, jamoCcmp: checked }));
-                    }}
-                  />
-                  <span>자모 조합</span>
-                </label>
-              </>
-            )}
-            <button
-              className="reset-button"
-              onClick={() => (mode === "basic" ? setBasicOpts(BASIC_DEFAULTS) : setMonoOpts(MONO_DEFAULTS))}
-            >
-              기본값 복원
+              코딩 폰트
             </button>
           </div>
-        )}
+          {mode === "basic" ? (
+            <>
+              <div className="control">
+                <span title="겹치는 라틴·숫자·문장부호를 가질 폰트">라틴 우선</span>
+                <div className="segmented">
+                  {(["A", "B"] as const).map((b) => (
+                    <button
+                      key={b}
+                      className={basicOpts.base === b ? "seg-active" : ""}
+                      onClick={() => setBasicOpts((o) => ({ ...o, base: b }))}
+                    >
+                      {b}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label className="control">
+                <span title="폰트 좌표 해상도 — 1em을 몇 단위로 나누는지. 비우면 A·B 중 큰 값으로 자동.">
+                  unitsPerEm
+                </span>
+                <span className="control-hint">
+                  {`A ${upemA ?? "—"} · B ${upemB ?? "—"}`}
+                </span>
+                <input
+                  className="name-input"
+                  type="number"
+                  spellCheck={false}
+                  placeholder={resolvedUpem ? `자동 · ${resolvedUpem}` : "자동(큰 값)"}
+                  value={upemText}
+                  onChange={(e) => {
+                    const v = e.currentTarget.value;
+                    setUpemText(v); // 텍스트는 그대로 보존 → 타이핑 중 지워지지 않음
+                    const n = Number(v.trim());
+                    // 빈칸·비숫자·범위 밖은 병합에선 자동(null)로 폴백. 단 입력칸 텍스트는 유지.
+                    const valid = v.trim() !== "" && Number.isFinite(n) && n >= UPEM_MIN && n <= UPEM_MAX;
+                    setBasicOpts((o) => ({ ...o, upem: valid ? n : null }));
+                  }}
+                />
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="control">
+                <span>
+                  한글 스케일 <b>{monoOpts.koreanScale.toFixed(2)}</b>
+                </span>
+                <input
+                  type="range"
+                  min={0.8}
+                  max={1.4}
+                  step={0.01}
+                  value={monoOpts.koreanScale}
+                  onChange={(e) => {
+                    // 이벤트 값은 반드시 업데이터 밖에서 읽는다 — React가 핸들러 종료 후
+                    // e.currentTarget을 null로 회수하므로 업데이터 안에서 읽으면 크래시.
+                    const v = Number(e.currentTarget.value);
+                    setMonoOpts((o) => ({ ...o, koreanScale: v }));
+                  }}
+                />
+              </label>
+              <label className="control">
+                <span>폭 배수</span>
+                <select
+                  className="select-input"
+                  value={monoOpts.widthMult}
+                  onChange={(e) => {
+                    const v = Number(e.currentTarget.value);
+                    setMonoOpts((o) => ({ ...o, widthMult: v }));
+                  }}
+                >
+                  <option value={2.0}>2.0 (라틴 2칸)</option>
+                  <option value={1.5}>1.5</option>
+                </select>
+              </label>
+              <label className="control">
+                <span>
+                  세로 오프셋{" "}
+                  <b>
+                    {monoOpts.ty >= 0 ? "+" : ""}
+                    {monoOpts.ty.toFixed(2)}em
+                  </b>
+                </span>
+                <input
+                  type="range"
+                  min={-0.1}
+                  max={0.1}
+                  step={0.01}
+                  value={monoOpts.ty}
+                  onChange={(e) => {
+                    const v = Number(e.currentTarget.value);
+                    setMonoOpts((o) => ({ ...o, ty: v }));
+                  }}
+                />
+              </label>
+              <label className="check-row" title="한자(U+4E00–9FFF) 복사 — 끄면 파일이 작아짐">
+                <input
+                  type="checkbox"
+                  checked={monoOpts.includeHanja}
+                  onChange={(e) => {
+                    const checked = e.currentTarget.checked;
+                    setMonoOpts((o) => ({ ...o, includeHanja: checked }));
+                  }}
+                />
+                <span>한자 포함</span>
+              </label>
+              <div className="control">
+                <span title="전각·CJK 구두점(U+3000·FF00–)을 가질 폰트">전각 담당</span>
+                <div className="segmented">
+                  {(["A", "B"] as const).map((f) => (
+                    <button
+                      key={f}
+                      className={monoOpts.fullwidth === f ? "seg-active" : ""}
+                      onClick={() => setMonoOpts((o) => ({ ...o, fullwidth: f }))}
+                    >
+                      {f}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label className="check-row" title="조합형 자모를 완성형으로 합성(GSUB ccmp)">
+                <input
+                  type="checkbox"
+                  checked={monoOpts.jamoCcmp}
+                  onChange={(e) => {
+                    const checked = e.currentTarget.checked;
+                    setMonoOpts((o) => ({ ...o, jamoCcmp: checked }));
+                  }}
+                />
+                <span>자모 조합</span>
+              </label>
+            </>
+          )}
+          <button
+            className="reset-button"
+            onClick={() => (mode === "basic" ? setBasicOpts(BASIC_DEFAULTS) : setMonoOpts(MONO_DEFAULTS))}
+          >
+            기본값 복원
+          </button>
+        </SidebarSection>
 
-        <div className="section-label">미리보기 설정</div>
-        <label className="control">
-          <span>
-            크기 <b>{fontSize}px</b>
-          </span>
-          <input
-            type="range"
-            min={12}
-            max={120}
-            value={fontSize}
-            onChange={(e) => setFontSize(Number(e.currentTarget.value))}
-          />
-        </label>
-        <label className="control">
-          <span>
-            줄높이 <b>{lineHeight.toFixed(2)}</b>
-          </span>
-          <input
-            type="range"
-            min={1}
-            max={2.5}
-            step={0.05}
-            value={lineHeight}
-            onChange={(e) => setLineHeight(Number(e.currentTarget.value))}
-          />
-        </label>
+        <SidebarSection
+          title="미리보기"
+          open={open.preview}
+          onToggle={() => toggleSection("preview")}
+        >
+          <label className="control">
+            <span>
+              크기 <b>{fontSize}px</b>
+            </span>
+            <input
+              type="range"
+              min={12}
+              max={120}
+              value={fontSize}
+              onChange={(e) => setFontSize(Number(e.currentTarget.value))}
+            />
+          </label>
+          <label className="control">
+            <span>
+              줄높이 <b>{lineHeight.toFixed(2)}</b>
+            </span>
+            <input
+              type="range"
+              min={1}
+              max={2.5}
+              step={0.05}
+              value={lineHeight}
+              onChange={(e) => setLineHeight(Number(e.currentTarget.value))}
+            />
+          </label>
+        </SidebarSection>
 
-        <div className="section-label">출력</div>
-        <input
-          className="name-input"
-          value={outName}
-          spellCheck={false}
-          placeholder={DEFAULT_NAMES[mode]}
-          onChange={(e) => setOutName(e.currentTarget.value)}
-          title="출력 폰트 패밀리 이름"
-        />
-        <select
-          className="select-input"
-          value={style}
-          onChange={(e) => setStyle(e.currentTarget.value as Style)}
-          title="출력 폰트 스타일 (name·OS/2 비트에 반영)"
-        >
-          {STYLES.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-        <label
-          className="check-row"
-          title="옵션(스케일·오프셋 등)을 바꾸면 0.5초 뒤 자동으로 다시 병합해 미리보기에 반영. 끄면 병합 버튼으로 수동 적용."
+        <SidebarSection
+          title="출력"
+          open={open.output}
+          onToggle={() => toggleSection("output")}
         >
           <input
-            type="checkbox"
-            checked={autoMerge}
-            onChange={(e) => {
-              const checked = e.currentTarget.checked;
-              setAutoMerge(checked);
-            }}
+            className="name-input"
+            value={outName}
+            spellCheck={false}
+            placeholder={DEFAULT_NAMES[mode]}
+            onChange={(e) => setOutName(e.currentTarget.value)}
+            title="출력 폰트 패밀리 이름"
           />
-          <span>옵션 바꾸면 자동 재병합</span>
-        </label>
-        <button
-          className={stale ? "merge-button merge-button-stale" : "merge-button"}
-          disabled={!canMerge}
-          onClick={() => void requestAutoMerge()}
-        >
-          {merging && <span className="spinner" />}
-          {merging ? "병합 중…" : stale ? "다시 병합" : "병합"}
-        </button>
-        <button
-          className="export-button"
-          disabled={!merged || merging}
-          onClick={exportMerged}
-        >
-          TTF로 저장…
-        </button>
+          <div className="control">
+            <select
+              className="select-input"
+              value={style}
+              onChange={(e) => setStyle(e.currentTarget.value as Style)}
+              title="출력 폰트의 스타일 라벨(name·OS/2·head 비트)만 설정합니다. 미리보기나 실제 글리프의 굵기·기울기는 바뀌지 않아요. 진짜 볼드/이탤릭은 해당 굵기의 A·B 원본을 로드하세요."
+            >
+              {STYLES.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <span className="control-hint">이름·OS/2 라벨 전용 · 미리보기엔 영향 없음</span>
+          </div>
+          <label
+            className="check-row"
+            title="옵션(스케일·오프셋 등)을 바꾸면 0.5초 뒤 자동으로 다시 병합해 미리보기에 반영. 끄면 병합 버튼으로 수동 적용."
+          >
+            <input
+              type="checkbox"
+              checked={autoMerge}
+              onChange={(e) => {
+                const checked = e.currentTarget.checked;
+                setAutoMerge(checked);
+              }}
+            />
+            <span>옵션 바꾸면 자동 재병합</span>
+          </label>
+          <button
+            className={stale ? "merge-button merge-button-stale" : "merge-button"}
+            disabled={!canMerge}
+            onClick={() => void requestAutoMerge()}
+          >
+            {merging && <span className="spinner" />}
+            {merging ? "병합 중…" : stale ? "다시 병합" : "병합"}
+          </button>
+          <button
+            className="export-button"
+            disabled={!merged || merging}
+            onClick={exportMerged}
+          >
+            TTF로 저장…
+          </button>
+        </SidebarSection>
       </aside>
 
       <section className="main">
@@ -626,7 +661,7 @@ function App() {
               {s.id === sample.id && (
                 <span className={merged ? "tab-dot tab-dot-merged" : "tab-dot"} />
               )}
-              {s.label.replace(/\s*\(.*\)$/, "")}
+              {s.filename}
             </div>
           ))}
         </div>
@@ -668,6 +703,7 @@ function App() {
         <StatusBar
           statusText={statusText}
           statusClass={statusClass}
+          dot={statusDot}
           cursor={cursor}
           fontSize={fontSize}
           lineHeight={lineHeight}

@@ -23,9 +23,10 @@ export type SlotId = "a" | "b";
 
 // 병합 규칙은 언어가 아니라 "우선순위 + 커버리지": 겹치는 글리프는 A가 이기고,
 // B는 A에 없는 나머지 전부를 채운다. 영문→A, 한글→B는 대표 사용례일 뿐.
-export const SLOT_INFO: Record<SlotId, { title: string; desc: string }> = {
-  a: { title: "A · 우선 폰트", desc: "겹치는 글리프는 A가 이김 · 보통 영문" },
-  b: { title: "B · 보충 폰트", desc: "A에 없는 글리프 전부 담당 · 보통 한글" },
+// title/desc는 빈 슬롯(드롭 유도)용, role은 로드된 슬림 행("역할 · upem N")용 — 순수 표시 문구.
+export const SLOT_INFO: Record<SlotId, { title: string; desc: string; role: string }> = {
+  a: { title: "A · 우선 폰트", desc: "겹치는 글리프는 A가 이김 · 보통 영문", role: "우선 · 겹치면 이김" },
+  b: { title: "B · 보충 폰트", desc: "A에 없는 글리프 전부 담당 · 보통 한글", role: "보충 · 없으면 담당" },
 };
 
 export type MergeMode = "basic" | "mono";

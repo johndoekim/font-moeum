@@ -203,6 +203,8 @@ function App() {
   const [basicOpts, setBasicOpts] = useState<BasicOpts>(BASIC_DEFAULTS);
   const [monoOpts, setMonoOpts] = useState<MonoOpts>(MONO_DEFAULTS);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  // 옵션을 바꾸면 자동으로 다시 병합할지 — 이 툴의 재조정 루프. 끄면 병합 버튼으로 수동 적용.
+  const [autoMerge, setAutoMerge] = useState(true);
   const [stats, setStats] = useState<unknown>(null); // 현재 미리보기 병합의 사이드카 통계
   // 현재 미리보기 중인 병합이 실제로 어느 모드로 만들어졌는지 — get_merge_stats가 실패해
   // stats가 null이어도 이 값은 mergeFonts 호출 시점의 mode를 그대로 담아 항상 신뢰 가능하다.
@@ -448,6 +450,7 @@ function App() {
   // dep은 buildRemergeTrigger()(name 제외) — 이름만 바꿔선 이 값이 그대로라 effect가 안 돈다.
   const remergeTriggerSerial = JSON.stringify(buildRemergeTrigger());
   useEffect(() => {
+    if (!autoMerge) return; // 자동 재병합 꺼짐 → 병합 버튼으로만 적용
     if (merged === null) return;
     if (mergeKey() === lastMergedKeyRef.current) return; // 방금 병합한 상태 → 재발화 방지
     const timer = window.setTimeout(() => {
@@ -455,9 +458,10 @@ function App() {
     }, 500);
     return () => window.clearTimeout(timer);
     // mergeKey(name 포함)는 실제 병합 시 쓰이고, effect 재발화 여부는 remergeTriggerSerial로만 판정.
+    // autoMerge를 켜는 순간 옵션이 스테일이면(키 불일치) 여기서 즉시 재병합이 예약된다.
     // 슬롯 변경은 clearMerged로 merged=null이 되어 여기 안 옴.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [merged, remergeTriggerSerial, requestAutoMerge]);
+  }, [merged, remergeTriggerSerial, requestAutoMerge, autoMerge]);
 
   // 4a. A/B 스왑 — 파일·face·업로드 번호를 통째로 맞바꾸고, 병합돼 있었다면 자동 재병합
   async function swapSlots() {
@@ -513,6 +517,9 @@ function App() {
   const previewFamily = merged ? `"${merged.family}"` : familyStack || undefined;
 
   const canMerge = fonts.a !== null && fonts.b !== null && !merging;
+  // 자동 재병합이 꺼진 상태에서 옵션이 바뀌어 현재 미리보기가 옛 병합 결과인 경우 →
+  // 병합 버튼을 "다시 병합"으로 바꿔 재병합을 유도한다.
+  const stale = merged !== null && !autoMerge && mergeKey() !== lastMergedKeyRef.current;
   // mono 모드에서 스왑하면 한글 폰트가 고정폭 A 자리로 가 check_monospace에 막힌다 —
   // basic 모드에서만 허용.
   const canSwap = !merging && mode === "basic" && (fonts.a !== null || fonts.b !== null);
@@ -579,24 +586,6 @@ function App() {
           onFile={(file) => loadFontFile("b", file)}
         />
 
-        <div className="section-label">병합 모드</div>
-        <div className="segmented">
-          <button
-            className={mode === "basic" ? "seg-active" : ""}
-            onClick={() => switchMode("basic")}
-            title="A·B를 그대로 합치고 라틴은 우선 폰트가 이김 — 범용"
-          >
-            일반 병합
-          </button>
-          <button
-            className={mode === "mono" ? "seg-active" : ""}
-            onClick={() => switchMode("mono")}
-            title="영문 고정폭 + 한글을 셀에 맞춰 스케일 — 코딩용"
-          >
-            코딩 폰트
-          </button>
-        </div>
-
         <button
           className="advanced-toggle"
           onClick={() => setAdvancedOpen((o) => !o)}
@@ -605,6 +594,17 @@ function App() {
         </button>
         {advancedOpen && (
           <div className="advanced-panel">
+            <label
+              className="check-row check-row-mode"
+              title="영문 고정폭 폰트에 한글을 셀(2칸)에 맞춰 스케일 — 터미널·에디터 격자 정렬용"
+            >
+              <input
+                type="checkbox"
+                checked={mode === "mono"}
+                onChange={(e) => switchMode(e.currentTarget.checked ? "mono" : "basic")}
+              />
+              <span>고정폭 코딩 폰트로 만들기</span>
+            </label>
             {mode === "basic" ? (
               <>
                 <div className="control">
@@ -651,9 +651,12 @@ function App() {
                     max={1.4}
                     step={0.01}
                     value={monoOpts.koreanScale}
-                    onChange={(e) =>
-                      setMonoOpts((o) => ({ ...o, koreanScale: Number(e.currentTarget.value) }))
-                    }
+                    onChange={(e) => {
+                      // 이벤트 값은 반드시 업데이터 밖에서 읽는다 — React가 핸들러 종료 후
+                      // e.currentTarget을 null로 회수하므로 업데이터 안에서 읽으면 크래시.
+                      const v = Number(e.currentTarget.value);
+                      setMonoOpts((o) => ({ ...o, koreanScale: v }));
+                    }}
                   />
                 </label>
                 <label className="control">
@@ -661,9 +664,10 @@ function App() {
                   <select
                     className="select-input"
                     value={monoOpts.widthMult}
-                    onChange={(e) =>
-                      setMonoOpts((o) => ({ ...o, widthMult: Number(e.currentTarget.value) }))
-                    }
+                    onChange={(e) => {
+                      const v = Number(e.currentTarget.value);
+                      setMonoOpts((o) => ({ ...o, widthMult: v }));
+                    }}
                   >
                     <option value={2.0}>2.0 (라틴 2칸)</option>
                     <option value={1.5}>1.5</option>
@@ -683,18 +687,20 @@ function App() {
                     max={0.1}
                     step={0.01}
                     value={monoOpts.ty}
-                    onChange={(e) =>
-                      setMonoOpts((o) => ({ ...o, ty: Number(e.currentTarget.value) }))
-                    }
+                    onChange={(e) => {
+                      const v = Number(e.currentTarget.value);
+                      setMonoOpts((o) => ({ ...o, ty: v }));
+                    }}
                   />
                 </label>
                 <label className="check-row" title="한자(U+4E00–9FFF) 복사 — 끄면 파일이 작아짐">
                   <input
                     type="checkbox"
                     checked={monoOpts.includeHanja}
-                    onChange={(e) =>
-                      setMonoOpts((o) => ({ ...o, includeHanja: e.currentTarget.checked }))
-                    }
+                    onChange={(e) => {
+                      const checked = e.currentTarget.checked;
+                      setMonoOpts((o) => ({ ...o, includeHanja: checked }));
+                    }}
                   />
                   <span>한자 포함</span>
                 </label>
@@ -716,9 +722,10 @@ function App() {
                   <input
                     type="checkbox"
                     checked={monoOpts.jamoCcmp}
-                    onChange={(e) =>
-                      setMonoOpts((o) => ({ ...o, jamoCcmp: e.currentTarget.checked }))
-                    }
+                    onChange={(e) => {
+                      const checked = e.currentTarget.checked;
+                      setMonoOpts((o) => ({ ...o, jamoCcmp: checked }));
+                    }}
                   />
                   <span>자모 조합</span>
                 </label>
@@ -781,13 +788,27 @@ function App() {
             </option>
           ))}
         </select>
+        <label
+          className="check-row"
+          title="옵션(스케일·오프셋 등)을 바꾸면 0.5초 뒤 자동으로 다시 병합해 미리보기에 반영. 끄면 병합 버튼으로 수동 적용."
+        >
+          <input
+            type="checkbox"
+            checked={autoMerge}
+            onChange={(e) => {
+              const checked = e.currentTarget.checked;
+              setAutoMerge(checked);
+            }}
+          />
+          <span>옵션 바꾸면 자동 재병합</span>
+        </label>
         <button
-          className="merge-button"
+          className={stale ? "merge-button merge-button-stale" : "merge-button"}
           disabled={!canMerge}
           onClick={() => void requestAutoMerge()}
         >
           {merging && <span className="spinner" />}
-          {merging ? "병합 중…" : "병합"}
+          {merging ? "병합 중…" : stale ? "다시 병합" : "병합"}
         </button>
         <button
           className="export-button"

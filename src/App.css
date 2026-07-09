@@ -293,6 +293,60 @@ body {
   cursor: pointer;
 }
 
+/* 고정폭 코딩 폰트 토글 — 고급 패널 최상단, 아래 세부 옵션과 구분 */
+.check-row-mode {
+  color: var(--fg);
+  font-weight: 600;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* 에러 바운더리 폴백 — 핸들러/렌더 예외 시 앱 전체 블랭크 대신 원인 표시 */
+.error-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: flex-start;
+  max-width: 640px;
+  margin: 12vh auto;
+  padding: 0 24px;
+}
+
+.error-fallback h1 {
+  margin: 0;
+  font-size: 18px;
+  color: var(--red);
+}
+
+.error-fallback pre {
+  width: 100%;
+  margin: 0;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
+.error-fallback button {
+  padding: 8px 18px;
+  border: 1px solid var(--purple);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--purple);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.error-fallback button:hover {
+  background: rgba(189, 147, 249, 0.12);
+}
+
 /* 기본값 복원 — 작은 텍스트 버튼 */
 .reset-button {
   align-self: flex-start;
@@ -334,6 +388,11 @@ body {
   background: var(--line);
   color: var(--comment);
   cursor: default;
+}
+
+/* 자동 재병합 꺼짐 + 옵션 변경으로 미리보기가 옛 결과일 때 — 재병합 유도 */
+.merge-button-stale {
+  background: var(--pink);
 }
 
 .spinner {

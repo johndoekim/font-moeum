@@ -117,6 +117,9 @@ const MONO_DEFAULTS: MonoOpts = {
 };
 const DEFAULT_NAMES: Record<MergeMode, string> = { basic: "MoeumMerged", mono: "MoeumMono" };
 const STYLES: Style[] = ["Regular", "Bold", "Italic", "Bold Italic"];
+// unitsPerEm 입력의 합리적 양수 범위 — 벗어나면 scale_upem에 깨진 값이 흘러가지 않도록 자동(null)로 폴백.
+const UPEM_MIN = 16;
+const UPEM_MAX = 16384;
 
 /** stats(unknown)에서 숫자만 안전하게 꺼낸다 (문자열·undefined·null → 0) */
 function num(v: unknown): number {
@@ -331,10 +334,21 @@ function App() {
     };
   }
 
-  // 캐시 키 = 슬롯 업로드 번호 + 옵션 전체(mode 포함). 옵션이 바뀌면 키가 바뀌고,
+  // 캐시 키 = 슬롯 업로드 번호 + 옵션 전체(mode 포함, name 포함). 옵션이 바뀌면 키가 바뀌고,
   // 모드 무관 필드(basic일 때 mono 슬라이더)는 buildOptions 출력에 애초에 없어 키에 안 걸린다.
+  // name도 키에 남겨둔다 — 이름을 바꾸고 병합하면 그 이름이 실제로 반영돼야 하므로.
   function mergeKey(): string {
     return `${slotSeqRef.current.a}|${slotSeqRef.current.b}|${JSON.stringify(buildOptions())}`;
+  }
+
+  // 자동 재병합 "트리거" 직렬화 — buildOptions()에서 name만 뺀 것. name은 글리프/외형에
+  // 영향이 없으므로(name 테이블만 바뀜) 이름만 편집할 때는 자동 재병합을 유발하지 않는다.
+  // style은 fsSelection/macStyle 비트 + name 테이블 둘 다에 영향을 주므로 트리거에 남긴다.
+  // 캐시 키·실제 병합 payload(buildOptions)에는 여전히 name이 그대로 쓰여, 수동 병합이나
+  // 다른 옵션 변경으로 트리거가 재발화될 때 최신 이름이 반영된다.
+  function buildRemergeTrigger(): Record<string, unknown> {
+    const { name, ...rest } = buildOptions();
+    return rest;
   }
 
   async function mergeFonts() {
@@ -431,7 +445,8 @@ function App() {
 
   // 재조정 루프: 이미 병합 결과가 있을 때(merged !== null)만 옵션 변경이 자동 재병합을 유발.
   // 첫 병합은 수동 버튼. lastMergedKeyRef 갱신으로 effect가 자기 자신을 재발화하지 않는다.
-  const optionsSerial = JSON.stringify(buildOptions());
+  // dep은 buildRemergeTrigger()(name 제외) — 이름만 바꿔선 이 값이 그대로라 effect가 안 돈다.
+  const remergeTriggerSerial = JSON.stringify(buildRemergeTrigger());
   useEffect(() => {
     if (merged === null) return;
     if (mergeKey() === lastMergedKeyRef.current) return; // 방금 병합한 상태 → 재발화 방지
@@ -439,9 +454,10 @@ function App() {
       void requestAutoMerge();
     }, 500);
     return () => window.clearTimeout(timer);
-    // mergeKey는 optionsSerial+슬롯seq에서 파생 — 슬롯 변경은 clearMerged로 merged=null이 되어 여기 안 옴
+    // mergeKey(name 포함)는 실제 병합 시 쓰이고, effect 재발화 여부는 remergeTriggerSerial로만 판정.
+    // 슬롯 변경은 clearMerged로 merged=null이 되어 여기 안 옴.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [merged, optionsSerial, requestAutoMerge]);
+  }, [merged, remergeTriggerSerial, requestAutoMerge]);
 
   // 4a. A/B 스왑 — 파일·face·업로드 번호를 통째로 맞바꾸고, 병합돼 있었다면 자동 재병합
   async function swapSlots() {
@@ -497,7 +513,9 @@ function App() {
   const previewFamily = merged ? `"${merged.family}"` : familyStack || undefined;
 
   const canMerge = fonts.a !== null && fonts.b !== null && !merging;
-  const canSwap = !merging && (fonts.a !== null || fonts.b !== null);
+  // mono 모드에서 스왑하면 한글 폰트가 고정폭 A 자리로 가 check_monospace에 막힌다 —
+  // basic 모드에서만 허용.
+  const canSwap = !merging && mode === "basic" && (fonts.a !== null || fonts.b !== null);
   // 현재 미리보기 중인 병합의 통계. 모드 판정은 stats.mode가 아니라 mergedMode(병합 시점의
   // mode)로 한다 — get_merge_stats가 실패해 stats가 null이어도 문구가 어긋나지 않는다.
   const st = stats as Record<string, unknown> | null;
@@ -545,7 +563,11 @@ function App() {
           className="swap-button"
           disabled={!canSwap}
           onClick={swapSlots}
-          title="A와 B를 맞바꿔 누가 라틴을 이길지 바꿉니다"
+          title={
+            mode === "mono"
+              ? "코딩 폰트 모드에선 A=고정폭 영문 고정 — 스왑 불가"
+              : "A와 B를 맞바꿔 누가 라틴을 이길지 바꿉니다"
+          }
         >
           ⇅ A/B 스왑
         </button>
@@ -610,8 +632,9 @@ function App() {
                     onChange={(e) => {
                       const v = e.currentTarget.value.trim();
                       const n = Number(v);
-                      // 빈칸은 자동(null), 숫자로 안 읽히는 쓰레기 입력도 자동으로 폴백.
-                      setBasicOpts((o) => ({ ...o, upem: v !== "" && Number.isFinite(n) ? n : null }));
+                      // 빈칸은 자동(null), 숫자로 안 읽히는 쓰레기 입력·범위 밖 값도 자동으로 폴백.
+                      const valid = v !== "" && Number.isFinite(n) && n >= UPEM_MIN && n <= UPEM_MAX;
+                      setBasicOpts((o) => ({ ...o, upem: valid ? n : null }));
                     }}
                   />
                 </label>

@@ -66,6 +66,10 @@ def check_monospace(font) -> int:
     글자가 있거나 폭이 서로 다르면 MergeError.
     """
     cmap = font.getBestCmap()
+    if not cmap:
+        raise MergeError(
+            "A 폰트가 고정폭(모노스페이스)이 아닙니다 — 코딩 폰트 모드는 "
+            "고정폭 영문 폰트가 필요합니다 (유니코드 cmap 없음).")
     hmtx = font["hmtx"]
     widths = set()
     for ch in MONO_PROBE:

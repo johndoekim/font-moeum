@@ -131,6 +131,11 @@ fn upload_font(request: Request<'_>, state: State<'_, AppState>) -> Result<(), S
     let path = state.work_dir.join(format!("upload_{n}.ttf"));
     std::fs::write(&path, bytes).map_err(|e| format!("임시 파일 쓰기 실패: {e}"))?;
     if let Some(replaced) = state.fonts.lock().unwrap().insert(slot, path) {
+        // OTF 변환 캐시(.ttfcache)도 함께 청소 — mtime 규칙 덕에 남아도 무해하지만
+        // %TEMP%에 쓰레기를 쌓지 않는다
+        let mut cache = replaced.clone().into_os_string();
+        cache.push(".ttfcache");
+        let _ = std::fs::remove_file(cache);
         let _ = std::fs::remove_file(replaced);
     }
     Ok(())

@@ -1,7 +1,7 @@
 [package]
 name = "font-moeum"
 version = "0.1.0"
-description = "영문 TTF + 한글 TTF 두 개를 병합하고 즉시 미리보기로 확인하는 GUI 툴"
+description = "영문 폰트 + 한글 폰트(TTF/OTF) 두 개를 병합하고 즉시 미리보기로 확인하는 GUI 툴"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

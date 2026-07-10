@@ -29,7 +29,7 @@ describe("num", () => {
 describe("buildStatus", () => {
   it("idle: prompts to upload both when nothing is loaded", () => {
     const { text, className } = buildStatus(base);
-    expect(text).toContain("TTF를 올리면");
+    expect(text).toContain("TTF/OTF를 올리면");
     expect(className).toBe("sb-item");
   });
 

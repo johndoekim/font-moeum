@@ -19,6 +19,10 @@ src-tauri/target/
 .venv/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+
+# OTF→TTF 변환 디스크 캐시 (CLI를 저장소 내 폰트로 돌리면 원본 옆에 생김)
+*.ttfcache
 
 # 개인 작업 문서 (커밋 제외)
 CLAUDE.md

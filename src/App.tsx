@@ -88,8 +88,9 @@ function App() {
   }
 
   async function loadFontFile(slot: SlotId, file: File) {
-    if (!file.name.toLowerCase().endsWith(".ttf")) {
-      setErrors((prev) => ({ ...prev, [slot]: "TTF 파일만 지원합니다" }));
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith(".ttf") && !lowerName.endsWith(".otf")) {
+      setErrors((prev) => ({ ...prev, [slot]: "TTF/OTF 파일만 지원합니다" }));
       return;
     }
     try {
@@ -107,15 +108,32 @@ function App() {
       clearMerged();
       // 병합용으로 Rust에 바이트 업로드 (웹뷰는 파일 경로를 모르므로)
       await invoke("upload_font", new Uint8Array(buffer), { headers: { slot } });
-      // 고정폭 판정 — mono 엔진 check_monospace와 같은 코드(사이드카 inspect)라 배지와
-      // 병합 검증이 어긋나지 않는다. 실패·미응답은 무시(monospace 미설정 = 배지 없음).
+      // 고정폭·OTF 변환 판정 — mono 엔진 check_monospace와 같은 코드(사이드카 inspect)라
+      // 배지와 병합 검증이 어긋나지 않는다. 전송 실패·미응답은 무시(배지 없음).
+      // ok:false(가변 OTF(CFF2) 등)는 슬롯 에러로 표면화 — FontFace는 CFF2도 잘 렌더링해
+      // 브라우저가 못 걸러주므로, 첫 병합이 아니라 업로드 시점에 알려야 한다.
       // family 가드: 응답이 오기 전에 같은 슬롯에 새 파일이 올라오면 낡은 판정을 버린다.
-      void invoke<{ monospace?: boolean }>("inspect_font", { slot })
+      void invoke<{ ok?: boolean; error?: string; monospace?: boolean; converted_from_otf?: boolean }>(
+        "inspect_font",
+        { slot },
+      )
         .then((r) => {
+          if (facesRef.current[slot] !== face) return;
+          if (r?.ok === false && typeof r?.error === "string") {
+            setErrors((prev) => ({ ...prev, [slot]: r.error ?? null }));
+            return;
+          }
           if (typeof r?.monospace !== "boolean") return;
           setFonts((prev) =>
             prev[slot]?.family === family
-              ? { ...prev, [slot]: { ...prev[slot], monospace: r.monospace } }
+              ? {
+                  ...prev,
+                  [slot]: {
+                    ...prev[slot],
+                    monospace: r.monospace,
+                    convertedFromOtf: r.converted_from_otf === true,
+                  },
+                }
               : prev,
           );
         })

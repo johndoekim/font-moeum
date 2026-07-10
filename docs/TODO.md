@@ -33,7 +33,7 @@
 ## Phase 2 — fonttools 병합 스크립트 · 앱과 무관하게 CLI 단독
 
 - [x] **2a.** 두 폰트 TTF(`glyf` 테이블) 검증 + 로드 · (반나절)
-  - `glyf` 없으면(=CFF) 거부. Merger는 glyf만 지원
+  - `glyf` 없으면(=CFF) 거부. Merger는 glyf만 지원 (Phase 7에서 정적 OTF는 로드 시 TTF 변환으로 완화)
 - [x] **2b.** em 크기 통일 · (반나절) → 기본값은 두 폰트 중 큰 upem으로 확대(정밀도 보존), --upem으로 강제 가능
   - `from fontTools.ttLib.scaleUpem import scale_upem` → `scale_upem(font, 1000)`
   - 안 맞추면 A글자·B글자 크기가 따로 놀음
@@ -93,11 +93,25 @@
 
 ---
 
+## Phase 7 — OTF(CFF) 입력 지원 · Phase 5 릴리스보다 먼저
+
+> 동기: OTF+OTF / OTF+TTF / TTF+OTF 조합 지원 요청. Merger는 CFF를 못 합치므로 정적 OTF를 로드 시점에 cu2qu로 TTF 변환(디스크 캐시) — 엔진 무변경. **출력은 항상 TTF**, CFF2(가변)는 거부. 상세는 [REFERENCE.md](REFERENCE.md) "OTF(CFF) 입력" 절.
+
+- [x] **7a.** `scripts/otf2ttf.py` 변환 모듈 + CLI + 첫 pytest(`test_otf2ttf.py`, in-memory CFF 픽스처) · (반나절)
+- [x] **7b.** `load_ttf` 통합 — 변환 훅 + `.ttfcache` 디스크 캐시(mtime 신선도) + CFF2 거부 · (반나절)
+- [x] **7c.** 사이드카 `inspect`에 `converted_from_otf` 필드 + Rust 교체 시 캐시 청소 · (한두 시간)
+- [x] **7d.** 프론트 — 확장자 게이트 `.otf` 허용, 슬롯 "OTF→TTF" 배지(툴팁: 곡선 근사·힌팅 소실), inspect `ok:false`를 슬롯 에러로 표면화(CFF2가 업로드 시점에 보임), 문구 TTF/OTF · (반나절)
+- [ ] **7e.** 실폰트 검증 — OFL OTF(Noto Sans KR, Source Code Pro)로 CLI 4조합 매트릭스 + 앱 확인 · (반나절)
+
+**완료 기준:** 4개 입력 조합 모두 CLI·앱에서 병합·저장되고, OTF 업로드 시 배지가 뜨며, 재조정 루프 속도는 TTF와 동일(변환은 업로드 시 1회).
+
+---
+
 ## Phase 5 — 오픈소스 릴리스
 
 - [ ] **5a.** 크로스플랫폼 빌드 — PyInstaller 사이드카 번들 (win/mac/linux) · (하루+)
   - **가장 골치아픈 구간.** 플랫폼별로 사이드카 바이너리를 따로 빌드/번들해야 함
-- [ ] **5b.** README — 스크린샷/데모 GIF, 사용법, **지원 범위 명시(TTF only, A+B)** · (반나절)
+- [ ] **5b.** README — 스크린샷/데모 GIF, 사용법, **지원 범위 명시(입력 TTF/정적 OTF · 출력 TTF, A+B)** · (반나절)
 - [ ] **5c.** 라이선스 정리 — MIT + "머지할 폰트 라이선스는 사용자 책임" disclaimer + 데모 폰트는 OFL/Apache · (반나절)
 - [ ] **5d.** (선택) GitHub Actions CI 자동 빌드 · (하루)
 

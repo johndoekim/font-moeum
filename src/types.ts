@@ -7,6 +7,7 @@ export interface LoadedFont {
   fileName: string;
   upem: number | null; // head.unitsPerEm (파싱 실패 시 null)
   monospace?: boolean; // 사이드카 inspect 판정 — undefined = 미판정/실패(배지 미표시)
+  convertedFromOtf?: boolean; // 사이드카 inspect 판정 — OTF(CFF) 입력, 병합 시 TTF로 변환됨
 }
 
 /** 병합 결과 캐시 항목 — 같은 (A업로드, B업로드, 옵션) 조합은 재병합 없이 복원.

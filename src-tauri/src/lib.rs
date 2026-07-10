@@ -27,7 +27,7 @@ impl Sidecar {
             .join(if cfg!(windows) { "python.exe" } else { "python" });
         if !python.is_file() {
             return Err(format!(
-                "사이드카 Python이 없습니다: {} — scripts/에서 `uv sync`를 실행하세요",
+                "병합 엔진(Python)이 없습니다: {} — scripts/에서 `uv sync`를 실행하세요",
                 python.display()
             ));
         }
@@ -46,7 +46,7 @@ impl Sidecar {
 
         let mut child = cmd
             .spawn()
-            .map_err(|e| format!("사이드카 실행 실패: {e}"))?;
+            .map_err(|e| format!("병합 엔진 실행 실패: {e}"))?;
         let stdin = child.stdin.take().expect("piped stdin");
         let stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
         Ok(Self { child, stdin, stdout })
@@ -58,17 +58,17 @@ impl Sidecar {
             .write_all(line.as_bytes())
             .and_then(|_| self.stdin.write_all(b"\n"))
             .and_then(|_| self.stdin.flush())
-            .map_err(|e| format!("사이드카 쓰기 실패: {e}"))?;
+            .map_err(|e| format!("병합 엔진에 요청을 보내지 못했습니다: {e}"))?;
 
         let mut resp = String::new();
         let n = self
             .stdout
             .read_line(&mut resp)
-            .map_err(|e| format!("사이드카 읽기 실패: {e}"))?;
+            .map_err(|e| format!("병합 엔진 응답을 받지 못했습니다: {e}"))?;
         if n == 0 {
-            return Err("사이드카가 종료되었습니다".into());
+            return Err("병합 엔진이 예기치 않게 종료되었습니다 — 다시 병합해 보세요".into());
         }
-        serde_json::from_str(&resp).map_err(|e| format!("사이드카 응답 파싱 실패: {e} — {resp}"))
+        serde_json::from_str(&resp).map_err(|e| format!("병합 엔진 응답 파싱 실패: {e} — {resp}"))
     }
 }
 
@@ -121,10 +121,10 @@ fn upload_font(request: Request<'_>, state: State<'_, AppState>) -> Result<(), S
         .unwrap_or_default()
         .to_string();
     if slot != "a" && slot != "b" {
-        return Err(format!("잘못된 슬롯: '{slot}'"));
+        return Err(format!("내부 오류: 잘못된 슬롯 '{slot}' — 파일을 다시 올려보세요"));
     }
     let InvokeBody::Raw(bytes) = request.body() else {
-        return Err("바이너리 본문이 필요합니다".into());
+        return Err("내부 오류: 폰트 데이터가 전달되지 않았습니다 — 파일을 다시 올려보세요".into());
     };
     // 슬롯 고정 파일명을 쓰면 스왑 후 재업로드가 반대 슬롯 파일을 덮어쓴다 — 항상 유니크하게
     let n = state.seq.fetch_add(1, Ordering::Relaxed);
@@ -155,7 +155,7 @@ fn swap_fonts(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 fn set_merged(request: Request<'_>, state: State<'_, AppState>) -> Result<(), String> {
     let InvokeBody::Raw(bytes) = request.body() else {
-        return Err("바이너리 본문이 필요합니다".into());
+        return Err("내부 오류: 병합 데이터가 전달되지 않았습니다 — 다시 병합해 보세요".into());
     };
     *state.last_merged.lock().unwrap() = Some(bytes.clone());
     Ok(())
@@ -228,6 +228,25 @@ fn get_merge_stats(state: State<'_, AppState>) -> Option<Value> {
     state.last_stats.lock().unwrap().clone()
 }
 
+/// 업로드된 슬롯 폰트의 고정폭 여부를 사이드카로 판정한다 — mono 엔진의
+/// check_monospace와 같은 코드로 답해 UI 배지와 병합 시 검증이 어긋나지 않는다.
+#[tauri::command]
+async fn inspect_font(app: AppHandle, slot: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let path = state
+            .fonts
+            .lock()
+            .unwrap()
+            .get(&slot)
+            .cloned()
+            .ok_or_else(|| format!("슬롯 '{slot}'에 업로드된 폰트가 없습니다"))?;
+        sidecar_call(&state, json!({"cmd": "inspect", "path": path.to_string_lossy()}))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -270,6 +289,7 @@ pub fn run() {
             upload_font,
             merge_fonts,
             get_merge_stats,
+            inspect_font,
             swap_fonts,
             set_merged,
             export_merged

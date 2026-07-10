@@ -16,6 +16,8 @@ export interface StatusInput {
   stats: unknown;
   baseFont: LoadedFont | null;
   basicOptsBase: "A" | "B";
+  cjkFont: LoadedFont | null;
+  basicOptsCjk: "A" | "B";
   fontsA: LoadedFont | null;
   fontsB: LoadedFont | null;
 }
@@ -37,16 +39,24 @@ export function buildStatus(s: StatusInput): { text: string; className: string; 
         ? s.notice
         : s.merged
           ? s.mergedMode === "mono"
-            ? `${s.merged.fileName} · 글리프 ${num(st?.copied)}개 복사` +
-              (num(st?.hanja_copied) ? ` (한자 ${num(st?.hanja_copied)})` : "") +
+            ? `${s.merged.fileName} · 글리프 ${num(st?.copied).toLocaleString("ko-KR")}개 복사` +
+              (num(st?.hanja_copied) ? ` (한자 ${num(st?.hanja_copied).toLocaleString("ko-KR")})` : "") +
               ` · 자동 축소 ${num(st?.capped)}개` +
-              (num(st?.ccmp_rules) ? ` · 자모 ${num(st?.ccmp_rules)}규칙` : "")
-            : `병합 미리보기 — ${s.merged.fileName} · 라틴 우선: ${s.baseFont?.fileName ?? `${s.basicOptsBase} 슬롯`}`
+              (num(st?.ccmp_rules) ? ` · 자모 규칙 ${num(st?.ccmp_rules)}개` : "")
+            : `병합 미리보기 — ${s.merged.fileName} · 라틴 담당: ${s.baseFont?.fileName ?? `${s.basicOptsBase} 슬롯`}` +
+              // cjk === base면 라틴 담당 표기가 전체 우선을 이미 함의 — 중복 표기 회피
+              (s.basicOptsCjk !== s.basicOptsBase
+                ? ` · CJK 담당: ${s.cjkFont?.fileName ?? `${s.basicOptsCjk} 슬롯`}`
+                : "")
           : s.fontsA && s.fontsB
-            ? "A 우선 + B 보충 조합 미리보기 중 (CSS 폴백 근사)"
+            ? s.mode === "mono"
+              ? "A 베이스 + B 한글 조합 미리보기 중 (병합 전 근사치)"
+              : "A 우선 + B 보충 조합 미리보기 중 (병합 전 근사치)"
             : s.fontsA || s.fontsB
-              ? "폰트 1개 적용 중 — 나머지 슬롯도 채워보세요"
-              : "우선(A)·보충(B) TTF를 올리면 함께 미리보기됩니다";
+              ? "폰트 1개 적용 중 — 나머지 슬롯도 채우면 함께 미리 볼 수 있습니다"
+              : s.mode === "mono"
+                ? "베이스(A)·한글(B) TTF를 올리면 함께 미리 볼 수 있습니다"
+                : "우선(A)·보충(B) TTF를 올리면 함께 미리 볼 수 있습니다";
   const className = s.mergeError
     ? "sb-item sb-error"
     : s.merged || s.notice

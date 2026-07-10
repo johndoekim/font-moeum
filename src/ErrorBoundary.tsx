@@ -26,7 +26,7 @@ export class ErrorBoundary extends Component<Props, State> {
     if (error) {
       return (
         <div className="error-fallback">
-          <h1>앗, 오류가 발생했어요</h1>
+          <h1>오류가 발생했습니다</h1>
           <pre>{error.message || String(error)}</pre>
           <button onClick={() => window.location.reload()}>다시 시작</button>
         </div>

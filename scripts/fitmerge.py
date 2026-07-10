@@ -32,7 +32,7 @@ from fontTools.pens.transformPen import TransformPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib.tables import otTables as ot
 
-from merge import MergeError, apply_style_bits, load_ttf, rewrite_names
+from merge import CJK_RANGES, MergeError, apply_style_bits, load_ttf, rewrite_names
 
 # 사이드카 I/O는 콘솔 코드페이지(Windows cp949 등)와 무관하게 UTF-8 고정.
 # stdout은 사이드카 프로토콜 전용이므로 라이브러리 함수는 stderr에만 쓴다.
@@ -41,22 +41,6 @@ sys.stderr.reconfigure(encoding="utf-8")
 
 # 고정폭 검증용 프로브 문자 — 폭이 다르기 쉬운 좁은/넓은 글자를 섞음
 MONO_PROBE = " A0Hinmw"
-
-# 복사 대상 코드포인트 범위. category:
-#   hangul    — 항상 복사·cmap 덮어쓰기 (B 승리)
-#   jamo      — 항상 복사, 호환 자모 소스 매핑 적용 (아래 _jamo_source)
-#   hanja     — include_hanja일 때만 (hanja_copied 별도 집계)
-#   fullwidth — fullwidth_source에 따라 덮어쓰기(B) 또는 A에 없는 것만 보충(A)
-CJK_RANGES = [
-    (0xAC00, 0xD7A3, "hangul"),     # 한글 음절
-    (0x1100, 0x11FF, "jamo"),       # 조합형 자모
-    (0x3130, 0x318F, "hangul"),     # 호환 자모
-    (0xA960, 0xA97F, "hangul"),     # 자모 확장-A
-    (0xD7B0, 0xD7FF, "hangul"),     # 자모 확장-B
-    (0x4E00, 0x9FFF, "hanja"),      # CJK 통합 한자
-    (0x3000, 0x303F, "fullwidth"),  # CJK 기호·구두점
-    (0xFF00, 0xFFEF, "fullwidth"),  # 전각/반각 형태
-]
 
 
 def check_monospace(font) -> int:
@@ -68,20 +52,20 @@ def check_monospace(font) -> int:
     cmap = font.getBestCmap()
     if not cmap:
         raise MergeError(
-            "A 폰트가 고정폭(모노스페이스)이 아닙니다 — 코딩 폰트 모드는 "
-            "고정폭 영문 폰트가 필요합니다 (유니코드 cmap 없음).")
+            "A 폰트에 유니코드 cmap이 없습니다 — 고정폭 여부를 확인할 수 없어 "
+            "코딩 폰트 모드에 쓸 수 없습니다.")
     hmtx = font["hmtx"]
     widths = set()
     for ch in MONO_PROBE:
         glyph_name = cmap.get(ord(ch))
         if glyph_name is None:
             raise MergeError(
-                "A 폰트가 고정폭(모노스페이스)이 아닙니다 — 코딩 폰트 모드는 "
+                "A 폰트가 고정폭(모노스페이스)이 아닙니다 — 코딩 폰트 모드에는 "
                 "고정폭 영문 폰트가 필요합니다.")
         widths.add(hmtx[glyph_name][0])
     if len(widths) != 1:
         raise MergeError(
-            "A 폰트가 고정폭(모노스페이스)이 아닙니다 — 코딩 폰트 모드는 "
+            "A 폰트가 고정폭(모노스페이스)이 아닙니다 — 코딩 폰트 모드에는 "
             "고정폭 영문 폰트가 필요합니다.")
     return widths.pop()
 
@@ -345,7 +329,7 @@ def fit_merge_to_file(font_a, font_b, output, *, name="MoeumMono", style="Regula
         safe_ymax, safe_ymin = hhea.ascent, hhea.descent
     if safe_ymax <= 0 or safe_ymin >= 0:
         warnings.append(
-            f"A 폰트의 세로 메트릭이 비정상입니다 (safe [{safe_ymin}, {safe_ymax}]) "
+            f"A 폰트의 세로 메트릭이 비정상입니다 (계산된 안전 범위 [{safe_ymin}, {safe_ymax}]) "
             f"— hhea 값으로 폴백합니다.")
         safe_ymax, safe_ymin = hhea.ascent, hhea.descent
 
@@ -356,6 +340,11 @@ def fit_merge_to_file(font_a, font_b, output, *, name="MoeumMono", style="Regula
             f"{font_b_path.name}: 유니코드 cmap이 없습니다 — 복사할 한글/CJK 글리프를 "
             f"찾을 수 없습니다.")
     cmap_a = font_a.getBestCmap()
+    # CJK_RANGES(merge.py 공용)의 category별 복사 규칙:
+    #   hangul    — 항상 복사·cmap 덮어쓰기 (B 승리)
+    #   jamo      — 항상 복사, 호환 자모 소스 매핑 적용 (_jamo_source)
+    #   hanja     — include_hanja일 때만 (hanja_copied 별도 집계)
+    #   fullwidth — fullwidth_source에 따라 덮어쓰기(B) 또는 A에 없는 것만 보충(A)
     plan: list[tuple[int, str, str]] = []  # (코드포인트, B 소스 글리프 이름, category)
     for lo, hi, category in CJK_RANGES:
         if category == "hanja" and not include_hanja:
@@ -471,7 +460,7 @@ def fit_merge_to_file(font_a, font_b, output, *, name="MoeumMono", style="Regula
             ccmp_rules = _add_jamo_ccmp(font_a, final_cmap)
         except Exception as e:
             warnings.append(
-                f"자모 조합(ccmp) 생성 실패: {e} — 이 기능 없이 저장합니다")
+                f"자모 조합(ccmp) 생성 실패: {e} — 자모 조합 없이 저장합니다")
 
     # --- 5. 후처리 ---
     # 고정폭 선언 (터미널/에디터가 모노스페이스로 인식하도록)
@@ -558,7 +547,7 @@ def main(argv=None) -> int:
     print(f"병합 완료: {result['path']} — 패밀리 '{args.name}', {elapsed:.1f}초")
     print(f"  복사 {result['copied']}자 (한자 {result['hanja_copied']}자, 새 글리프 "
           f"{result['glyphs_added']}개) · 자동 축소 {result['capped']}개 · "
-          f"자모 조합 {result['ccmp_rules']}규칙 · "
+          f"자모 규칙 {result['ccmp_rules']}개 · "
           f"라틴 {result['latin_advance']} / 한글 {result['korean_advance']} 단위 "
           f"(UPM {result['upem']})")
     for warning in result["warnings"]:

@@ -401,6 +401,13 @@ body {
   border-bottom: 1px solid var(--line);
 }
 
+/* A 고정폭 감지 시 코딩 폰트 모드 추천 배지 — 안내일 뿐, 자동 전환은 하지 않는다 */
+.mode-hint {
+  font-size: 11px;
+  color: var(--comment);
+  padding: 6px 2px 0;
+}
+
 /* select — name-input과 같은 톤 */
 .select-input {
   padding: 7px 10px;

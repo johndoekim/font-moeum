@@ -31,6 +31,19 @@ sys.stderr.reconfigure(encoding="utf-8")
 WIN = (3, 1, 0x409)  # platformID, platEncID, langID
 MAC = (1, 0, 0)
 
+# CJK 코드포인트 범위 — 두 엔진 공용. category 태그(hangul/jamo/hanja/fullwidth)는
+# fitmerge의 복사 로직이 소비하고, basic 모드(cjk_source)는 전 범위를 하나로 취급한다.
+CJK_RANGES = [
+    (0xAC00, 0xD7A3, "hangul"),     # 한글 음절
+    (0x1100, 0x11FF, "jamo"),       # 조합형 자모
+    (0x3130, 0x318F, "hangul"),     # 호환 자모
+    (0xA960, 0xA97F, "hangul"),     # 자모 확장-A
+    (0xD7B0, 0xD7FF, "hangul"),     # 자모 확장-B
+    (0x4E00, 0x9FFF, "hanja"),      # CJK 통합 한자
+    (0x3000, 0x303F, "fullwidth"),  # CJK 기호·구두점
+    (0xFF00, 0xFFEF, "fullwidth"),  # 전각/반각 형태
+]
+
 
 class MergeError(Exception):
     """입력 검증/병합 단계에서 사용자에게 보여줄 오류."""
@@ -110,11 +123,60 @@ def apply_style_bits(font: TTFont, style: str) -> None:
         head.macStyle = ms
 
 
+def _strip_overlapping_cjk(loser: TTFont, winner: TTFont) -> int:
+    """양쪽이 모두 커버하는 CJK 코드포인트를 loser의 유니코드 cmap에서 삭제한다.
+
+    Merger는 폰트별로 format 12(있으면) 아니면 format 4만 소비하므로 두 포맷
+    모두에서 지운다. format 14(UVS)는 불변 — default 엔트리는 병합 후 메가
+    cmap 기준으로 해석돼 자동으로 이긴 쪽을 따라간다. loser 단독 코드포인트는
+    유지(커버리지 손실 방지). 글리프 자체는 남는다(v1 트레이드오프).
+    """
+    loser_cmap = loser.getBestCmap() or {}
+    winner_cmap = winner.getBestCmap() or {}
+    targets = {cp for cp in loser_cmap if cp in winner_cmap
+               and any(lo <= cp <= hi for lo, hi, _cat in CJK_RANGES)}
+    for subtable in loser["cmap"].tables:  # fitmerge의 서브테이블 순회 관례와 동일
+        if subtable.format == 14:
+            continue
+        if not (subtable.platformID == 0
+                or (subtable.platformID == 3 and subtable.platEncID in (1, 10))):
+            continue
+        for cp in targets:
+            subtable.cmap.pop(cp, None)
+    return len(targets)
+
+
 def merge_to_file(font_a, font_b, output, *, name: str = "MoeumMerged",
-                  base: str = "A", upem: int | None = None, style: str = "Regular") -> Path:
-    """두 TTF를 병합해 output에 저장하고 경로를 돌려준다. 실패 시 MergeError."""
+                  base: str = "A", upem: int | None = None, style: str = "Regular",
+                  cjk_source: str | None = None) -> Path:
+    """두 TTF를 병합해 output에 저장하고 경로를 돌려준다. 실패 시 MergeError.
+
+    cjk_source가 base와 다르면 겹치는 CJK(CJK_RANGES)만 그 폰트가 가진다 —
+    None(기본)이면 base를 따르는 기존 동작.
+    """
     paths = {"A": Path(font_a), "B": Path(font_b)}
     fonts = {key: load_ttf(path) for key, path in paths.items()}
+
+    # 세로 조판 테이블(vhea/vmtx)이 한쪽에만 있으면 Merger가 속성 병합에서
+    # NotImplemented와 int를 비교하다 죽는다(업스트림 제약 — 맑은 고딕 등 세로
+    # 메트릭을 가진 한글 폰트가 걸림). 가진 쪽에서 제거하고 경고만 남긴다 —
+    # 이 툴의 산출물은 가로쓰기 용도라 세로 메트릭 소실은 실사용 영향이 없다.
+    for tag in ("vhea", "vmtx"):
+        has = {key: tag in font for key, font in fonts.items()}
+        if has["A"] != has["B"]:
+            owner = "A" if has["A"] else "B"
+            del fonts[owner][tag]
+            print(f"{owner}({paths[owner].name}): 한쪽에만 있는 세로 메트릭 '{tag}' 제거 "
+                  f"— Merger가 단측 세로 테이블을 병합하지 못함", file=sys.stderr)
+
+    # JSTF(양쪽 정렬 데이터)는 Merger의 범용 병합이 내부 리스트 속성에서 죽는다
+    # (Arial·Times 등 MS 폰트가 보유). 현대 셰이퍼는 소비하지 않는 테이블이라
+    # 항상 제거 — 양쪽에 있어도 병합 불가능한 것은 마찬가지다.
+    for key, font in fonts.items():
+        if "JSTF" in font:
+            del font["JSTF"]
+            print(f"{key}({paths[key].name}): 'JSTF' 제거 — Merger가 병합하지 못하는 "
+                  f"테이블 (렌더링 영향 없음)", file=sys.stderr)
 
     # unitsPerEm 통일 — 기본은 큰 쪽에 맞춰 확대(정밀도 손실 최소화)
     upems = {key: font["head"].unitsPerEm for key, font in fonts.items()}
@@ -122,6 +184,15 @@ def merge_to_file(font_a, font_b, output, *, name: str = "MoeumMerged",
 
     # base 폰트를 리스트 첫 번째로 — 겹치는 cmap에서 첫 번째가 이긴다
     order = ["A", "B"] if base == "A" else ["B", "A"]
+
+    # 겹치는 CJK만 cjk_source가 이기게: 지는 쪽(= base, 모든 걸 이기는 쪽)의 cmap에서
+    # 교집합 CJK를 미리 삭제해 Merger의 first-wins를 우회한다.
+    if cjk_source and cjk_source != base:
+        if cjk_source not in ("A", "B"):
+            raise MergeError(f"cjk_source는 A 또는 B여야 합니다: {cjk_source}")
+        removed = _strip_overlapping_cjk(loser=fonts[base], winner=fonts[cjk_source])
+        print(f"CJK 담당({cjk_source}): 겹치는 CJK {removed}자 — {base} cmap에서 제거",
+              file=sys.stderr)
 
     with tempfile.TemporaryDirectory() as tmp:
         merge_files = []
@@ -160,6 +231,8 @@ def main(argv=None) -> int:
                         help="출력 폰트 패밀리 이름 (기본: %(default)s)")
     parser.add_argument("--base", choices=["A", "B"], default="A",
                         help="겹치는 라틴/숫자/문장부호를 가질 폰트 (기본: %(default)s)")
+    parser.add_argument("--cjk", choices=["A", "B"], default=None,
+                        help="겹치는 한글·한자·전각(CJK)을 가질 폰트 (기본: --base를 따름)")
     parser.add_argument("-o", "--output", type=Path, default=None,
                         help="출력 경로 (기본: <name>.ttf)")
     parser.add_argument("--upem", type=int, default=None,
@@ -172,7 +245,8 @@ def main(argv=None) -> int:
     out_path = args.output or Path(f"{args.name}.ttf")
     try:
         merge_to_file(args.font_a, args.font_b, out_path,
-                      name=args.name, base=args.base, upem=args.upem, style=args.style)
+                      name=args.name, base=args.base, upem=args.upem, style=args.style,
+                      cjk_source=args.cjk)
     except MergeError as e:
         print(f"오류: {e}", file=sys.stderr)
         return e.code
@@ -182,6 +256,8 @@ def main(argv=None) -> int:
     names = {"A": args.font_a.name, "B": args.font_b.name}
     print(f"병합 완료: {out_path} — 패밀리 '{args.name}', {elapsed:.1f}초")
     print(f"  우선({first}): {names[first]} · 보조: {names[second]}")
+    if args.cjk and args.cjk != args.base:
+        print(f"  CJK 담당({args.cjk}): {names[args.cjk]}")
     return 0
 
 

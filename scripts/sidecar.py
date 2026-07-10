@@ -8,9 +8,10 @@
   ← {"ok": true, "fonttools": "4.63.0"}
 
   → {"cmd": "merge", "mode": "basic", "font_a": "...", "font_b": "...", "output": "...",
-     "name": "MoeumMerged", "base": "A", "upem": null, "style": "Regular"}
+     "name": "MoeumMerged", "base": "A", "cjk_source": "B", "upem": null, "style": "Regular"}
   ← {"ok": true, "path": "...", "elapsed": 2.8, "stats": {"mode": "basic"}}
-     (mode 없으면 "basic"과 동일 — 하위호환. 실패 시 {"ok": false, "error": "..."})
+     (mode 없으면 "basic"과 동일 — 하위호환. cjk_source 없거나 null이면 base를 따름
+      — 기존 동작. 실패 시 {"ok": false, "error": "..."})
 
   → {"cmd": "merge", "mode": "mono", "font_a": "...", "font_b": "...", "output": "...",
      "name": "MoeumMono", "style": "Regular", "korean_scale": 1.15, "width_mult": 2.0,
@@ -20,17 +21,21 @@
                "latin_advance": 600, "korean_advance": 1200, "upem": 1000,
                "hanja_copied": 4888, "ccmp_rules": 40, "warnings": []}}
 
+  → {"cmd": "inspect", "path": "..."}
+  ← {"ok": true, "monospace": true}               (열기 실패 시 {"ok": false, "error": "..."})
+
   → {"cmd": "quit"}                                (응답 없이 종료; stdin EOF도 동일)
 """
 
 import json
 import sys
 import time
+from pathlib import Path
 
 from fontTools import version as fonttools_version
 
-from fitmerge import fit_merge_to_file
-from merge import MergeError, merge_to_file
+from fitmerge import check_monospace, fit_merge_to_file
+from merge import MergeError, load_ttf, merge_to_file
 
 
 sys.stdin.reconfigure(encoding="utf-8")
@@ -43,6 +48,7 @@ def _merge_basic(req: dict) -> dict:
         req["font_a"], req["font_b"], req["output"],
         name=req.get("name", "MoeumMerged"),
         base=req.get("base", "A"),
+        cjk_source=req.get("cjk_source"),
         upem=req.get("upem"),
         style=req.get("style", "Regular"),
     )
@@ -66,10 +72,23 @@ def _merge_mono(req: dict) -> dict:
     return {"path": path, "stats": stats}
 
 
+def _inspect(req: dict) -> dict:
+    """폰트 고정폭 여부 판정 — UI 배지와 mono 엔진 하드 에러(check_monospace)가
+    같은 코드를 쓰는 단일 진실원. 열기 실패(MergeError)는 호출자에서 ok:false로 변환."""
+    font = load_ttf(Path(req["path"]))
+    try:
+        check_monospace(font)
+    except MergeError:
+        return {"ok": True, "monospace": False}
+    return {"ok": True, "monospace": True}
+
+
 def handle(req: dict):
     cmd = req.get("cmd")
     if cmd == "ping":
         return {"ok": True, "fonttools": fonttools_version}
+    if cmd == "inspect":
+        return _inspect(req)
     if cmd == "merge":
         mode = req.get("mode", "basic")
         t0 = time.perf_counter()

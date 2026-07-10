@@ -5,7 +5,13 @@
 **fonttools Merger 제약 (반드시 지킬 것)**
 - 모든 폰트가 TrueType 아웃라인(`glyf`)이어야 함. CFF 병합 미지원 → 입력 검증에서 걸러라
 - 모든 폰트의 `unitsPerEm`이 동일해야 함 → `scale_upem`으로 사전 통일
-- 중복 글리프 구분이 일어나면 `GSUB` 테이블 필요
+- 중복 글리프 구분이 일어나면 `GSUB` 테이블 필요 — 겹치는 코드포인트가 서로 다른 글리프면 Merger가 synthetic 'locl' SingleSubst를 합성한다
+- cmap 소비는 폰트별 format 12(있으면) 아니면 format 4만 — 겹침 처리는 리스트 첫 번째 폰트 승리(first-wins)
+- `cjk_source` 옵션(basic 모드)은 병합 전 지는 쪽(base) cmap의 모든 유니코드 서브테이블(format 14 제외)에서 **양쪽이 모두 커버하는** CJK 코드포인트를 삭제해 first-wins를 우회한다. 지는 쪽의 죽은 글리프는 파일에 남고(v1 트레이드오프), OS/2 유니코드 범위는 Merger가 bitwise-or라 무보정으로 정합
+- Merger 산출물은 `post` format 3(글리프 이름 소실) — 재로드 시 fontTools가 cmap에서 이름을 합성(`uniAC00` 등)하므로 **글리프 이름으로 출처 판별 불가**. 검증은 hmtx advance 등 실측값으로 할 것
+- **한쪽에만 있는 `vhea`/`vmtx`(세로 메트릭)는 Merger가 속성 병합에서 죽는다** — `mergeObjects`가 테이블 부재(NotImplemented)를 속성값으로 흘려 raw `max`/`min`/`equal`과 비교(`'>' not supported between 'int' and 'NotImplementedType'` 류 — 어느 속성이 먼저 터지는지는 set 순회 순서라 에러 문구가 실행마다 다름). 맑은 고딕 등 세로 메트릭 있는 한글 폰트가 걸림 → merge.py가 병합 전 가진 쪽에서 제거(가로쓰기 산출물이라 무해)
+- **`JSTF`(양쪽 정렬 데이터)는 Merger 범용 병합이 내부 리스트 속성에서 죽는다**(`type object 'list' has no attribute 'mergeMap'`). Arial·Times 등 MS 폰트가 보유 → merge.py가 병합 전 항상 제거(현대 셰이퍼 미소비, 렌더링 영향 없음)
+- 이미 병합된 대형 폰트를 다시 병합해 글리프 합계가 65,535(TTF `numGlyphs` uint16 한계)를 넘으면 저장 단계에서 실패 — 형식의 물리적 한계
 
 **영문+한글 특유의 사실**
 - 라틴(U+0041~)과 한글 음절(U+AC00~D7A3)은 유니코드 영역이 완전히 달라 **충돌이 거의 없음** → 이 조합은 병합 중 제일 깨끗한 축

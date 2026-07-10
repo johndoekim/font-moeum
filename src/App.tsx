@@ -107,6 +107,19 @@ function App() {
       clearMerged();
       // 병합용으로 Rust에 바이트 업로드 (웹뷰는 파일 경로를 모르므로)
       await invoke("upload_font", new Uint8Array(buffer), { headers: { slot } });
+      // 고정폭 판정 — mono 엔진 check_monospace와 같은 코드(사이드카 inspect)라 배지와
+      // 병합 검증이 어긋나지 않는다. 실패·미응답은 무시(monospace 미설정 = 배지 없음).
+      // family 가드: 응답이 오기 전에 같은 슬롯에 새 파일이 올라오면 낡은 판정을 버린다.
+      void invoke<{ monospace?: boolean }>("inspect_font", { slot })
+        .then((r) => {
+          if (typeof r?.monospace !== "boolean") return;
+          setFonts((prev) =>
+            prev[slot]?.family === family
+              ? { ...prev, [slot]: { ...prev[slot], monospace: r.monospace } }
+              : prev,
+          );
+        })
+        .catch(() => {});
       // 교체된 업로드를 쓰던 캐시 항목은 무효화 + face 정리
       const replacedSeq = slotSeqRef.current[slot];
       slotSeqRef.current[slot] = ++uploadCounterRef.current;
@@ -117,7 +130,7 @@ function App() {
         }
       }
     } catch (e) {
-      setErrors((prev) => ({ ...prev, [slot]: `로드 실패: ${String(e)}` }));
+      setErrors((prev) => ({ ...prev, [slot]: `로드 실패 — 파일이 손상됐거나 유효한 폰트가 아닙니다 (${String(e)})` }));
     }
   }
 
@@ -126,7 +139,7 @@ function App() {
   function buildOptions(): Record<string, unknown> {
     const name = outName.trim() || DEFAULT_NAMES[mode];
     if (mode === "basic")
-      return { mode, name, style, base: basicOpts.base, upem: basicOpts.upem };
+      return { mode, name, style, base: basicOpts.base, cjk_source: basicOpts.cjk, upem: basicOpts.upem };
     return {
       mode,
       name,
@@ -173,7 +186,7 @@ function App() {
         setStats(cached.stats);
         setMergedMode(mode);
         lastMergedKeyRef.current = key;
-        flashNotice("현재 조합·옵션은 이미 병합돼 있어 캐시에서 복원 — 결과 동일, 재계산 생략");
+        flashNotice("같은 조합·옵션으로 이미 병합됨 — 이전 결과를 바로 표시");
       } catch (e) {
         setMergeError(String(e));
       }
@@ -328,6 +341,7 @@ function App() {
   // basic 모드에서만 허용.
   const canSwap = !merging && mode === "basic" && (fonts.a !== null || fonts.b !== null);
   const baseFont = basicOpts.base === "A" ? fonts.a : fonts.b;
+  const cjkFont = basicOpts.cjk === "A" ? fonts.a : fonts.b;
   // basic 모드 unitsPerEm 표시용: 각 폰트 실제 upem과 자동값(= A·B 중 큰 값, Python 규칙과 동일).
   const upemA = fonts.a?.upem ?? null;
   const upemB = fonts.b?.upem ?? null;
@@ -342,6 +356,8 @@ function App() {
     stats,
     baseFont,
     basicOptsBase: basicOpts.base,
+    cjkFont,
+    basicOptsCjk: basicOpts.cjk,
     fontsA: fonts.a,
     fontsB: fonts.b,
   });
@@ -367,8 +383,8 @@ function App() {
               aria-label="A/B 스왑"
               title={
                 mode === "mono"
-                  ? "코딩 폰트 모드에선 A=고정폭 영문 고정 — 스왑 불가"
-                  : "A와 B를 맞바꿔 누가 라틴을 이길지 바꿉니다"
+                  ? "코딩 폰트 모드에선 A는 고정폭 영문 전용 — 스왑 불가"
+                  : "A·B를 맞바꿈 — 겹치는 라틴을 가질 폰트도 반대로"
               }
             >
               ⇅
@@ -377,14 +393,14 @@ function App() {
         >
           <FontSlot
             slot="a"
-            info={SLOT_INFO.a}
+            info={SLOT_INFO[mode].a}
             font={fonts.a}
             error={errors.a}
             onFile={(file) => loadFontFile("a", file)}
           />
           <FontSlot
             slot="b"
-            info={SLOT_INFO.b}
+            info={SLOT_INFO[mode].b}
             font={fonts.b}
             error={errors.b}
             onFile={(file) => loadFontFile("b", file)}
@@ -401,7 +417,7 @@ function App() {
               type="button"
               className={mode === "basic" ? "seg-active" : ""}
               onClick={() => switchMode("basic")}
-              title="A·B를 합쳐 라틴을 우선 폰트가 이긴다 — 일반 병합"
+              title="한글이 자기 비율대로 들어감 — 문서·UI용 (A·B 전체 합침)"
             >
               일반
             </button>
@@ -409,15 +425,22 @@ function App() {
               type="button"
               className={mode === "mono" ? "seg-active" : ""}
               onClick={() => switchMode("mono")}
-              title="영문 고정폭 폰트에 한글을 셀(2칸)에 맞춰 스케일 — 터미널·에디터 격자 정렬용"
+              title={
+                fonts.a?.monospace === false
+                  ? "한글이 라틴 2칸 격자에 맞춰 들어감 — 터미널·에디터용 (현재 A가 고정폭이 아니라 병합이 거부됩니다)"
+                  : "한글이 라틴 2칸 격자에 맞춰 들어감 — 터미널·에디터용 (A는 고정폭 영문)"
+              }
             >
               코딩 폰트
             </button>
           </div>
+          {mode === "basic" && fonts.a?.monospace === true && (
+            <div className="mode-hint">A가 고정폭 — 코딩 폰트 모드 추천</div>
+          )}
           {mode === "basic" ? (
             <>
               <div className="control">
-                <span title="겹치는 라틴·숫자·문장부호를 가질 폰트">라틴 우선</span>
+                <span title="겹치는 라틴·숫자·문장부호를 가질 폰트">라틴 담당</span>
                 <div className="segmented">
                   {(["A", "B"] as const).map((b) => (
                     <button
@@ -426,6 +449,20 @@ function App() {
                       onClick={() => setBasicOpts((o) => ({ ...o, base: b }))}
                     >
                       {b}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="control">
+                <span title="겹치는 한글·한자·전각(CJK)을 가질 폰트">CJK 담당</span>
+                <div className="segmented">
+                  {(["A", "B"] as const).map((c) => (
+                    <button
+                      key={c}
+                      className={basicOpts.cjk === c ? "seg-active" : ""}
+                      onClick={() => setBasicOpts((o) => ({ ...o, cjk: c }))}
+                    >
+                      {c}
                     </button>
                   ))}
                 </div>
@@ -441,7 +478,7 @@ function App() {
                   className="name-input"
                   type="number"
                   spellCheck={false}
-                  placeholder={resolvedUpem ? `자동 · ${resolvedUpem}` : "자동(큰 값)"}
+                  placeholder={resolvedUpem ? `자동 · ${resolvedUpem}` : "자동 · A·B 중 큰 값"}
                   value={upemText}
                   onChange={(e) => {
                     const v = e.currentTarget.value;
@@ -520,7 +557,7 @@ function App() {
                 <span>한자 포함</span>
               </label>
               <div className="control">
-                <span title="전각·CJK 구두점(U+3000·FF00–)을 가질 폰트">전각 담당</span>
+                <span title="전각·CJK 구두점(U+3000–303F·FF00–FFEF)을 가질 폰트">전각 담당</span>
                 <div className="segmented">
                   {(["A", "B"] as const).map((f) => (
                     <button
@@ -604,7 +641,7 @@ function App() {
               className="select-input"
               value={style}
               onChange={(e) => setStyle(e.currentTarget.value as Style)}
-              title="출력 폰트의 스타일 라벨(name·OS/2·head 비트)만 설정합니다. 미리보기나 실제 글리프의 굵기·기울기는 바뀌지 않아요. 진짜 볼드/이탤릭은 해당 굵기의 A·B 원본을 로드하세요."
+              title="출력 폰트의 스타일 라벨(name·OS/2·head 비트)만 설정 — 실제 글리프의 굵기·기울기는 그대로. 진짜 볼드·이탤릭은 해당 굵기의 A·B 원본을 로드하세요."
             >
               {STYLES.map((s) => (
                 <option key={s} value={s}>

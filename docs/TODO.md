@@ -111,9 +111,10 @@
 
 - [ ] **5a.** 크로스플랫폼 빌드 — PyInstaller 사이드카 번들 (win/mac/linux) · (하루+)
   - **가장 골치아픈 구간.** 플랫폼별로 사이드카 바이너리를 따로 빌드/번들해야 함
-- [ ] **5b.** README — 스크린샷/데모 GIF, 사용법, **지원 범위 명시(입력 TTF/정적 OTF · 출력 TTF, A+B)** · (반나절)
-- [ ] **5c.** 라이선스 정리 — MIT + "머지할 폰트 라이선스는 사용자 책임" disclaimer + 데모 폰트는 OFL/Apache · (반나절)
-- [ ] **5d.** (선택) GitHub Actions CI 자동 빌드 · (하루)
+  - → **Windows 완료**: onefile(console·upx없음·fontTools 전체 hiddenimports) + `pnpm build:sidecar`(rustc 트리플 배치) + 스모크 게이트(`scripts/smoke_sidecar.py`, lazy=False 전 테이블 디컴파일) + Tauri externalBin·dev/prod spawn 분기(`cfg!(debug_assertions)`) + NSIS/MSI 산출·무설치 실행 스모크 확인. mac/linux는 5d CI에서(크로스컴파일 불가)
+- [x] **5b.** README — 스크린샷/데모 GIF, 사용법, **지원 범위 명시(입력 TTF/정적 OTF · 출력 TTF, A+B)** · (반나절) → 본문 완료(설치·사용법·병합 모드·소스 빌드·disclaimer·크레딧). 스크린샷/GIF는 docs/media/ 슬롯 + 캡처 가이드 주석으로 준비, 실제 캡처만 남음
+- [x] **5c.** 라이선스 정리 — MIT + "머지할 폰트 라이선스는 사용자 책임" disclaimer + 데모 폰트는 OFL/Apache · (반나절) → sample/에 OFL 사본·출처 표, .gitignore 화이트리스트, disclaimer는 README에
+- [ ] **5d.** (선택→**필수 승격**) GitHub Actions CI 자동 빌드 — mac/linux 바이너리는 CI가 유일한 경로 · (하루)
 
 **완료 기준:** GitHub에 올리고 릴리스에 바이너리 첨부. 남이 다운받아 바로 실행 가능.
 

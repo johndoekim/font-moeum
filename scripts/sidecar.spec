@@ -8,8 +8,8 @@
 
 설계 결정 (Task 1 브리프 — 변경 시 근거를 먼저 갱신할 것):
 
-1. onefile — onedir이 아니라 EXE 하나에 binaries/zipfiles/datas를 전부 담는다
-   (아래 EXE() 호출에 a.binaries/a.zipfiles/a.datas를 직접 전달, COLLECT() 없음).
+1. onefile — onedir이 아니라 EXE 하나에 binaries/datas를 전부 담는다
+   (아래 EXE() 호출에 a.binaries/a.datas를 직접 전달, COLLECT() 없음).
    Tauri externalBin 규약(타깃 트리플 접미사가 붙은 단일 파일)에 맞추기 위함.
    압축해제 비용은 사이드카가 앱 세션당 1회만 기동 + 기존 워밍업 스레드가
    숨기므로 무의미하다.
@@ -41,8 +41,6 @@
 
 from PyInstaller.utils.hooks import collect_submodules
 
-block_cipher = None
-
 a = Analysis(
     ['sidecar.py'],
     pathex=['.'],
@@ -55,15 +53,13 @@ a = Analysis(
     excludes=['tkinter'],
     noarchive=False,
     optimize=0,
-    cipher=block_cipher,
 )
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure)
 
 exe = EXE(
     pyz,
     a.scripts,
     a.binaries,       # onefile: 바이너리 의존성을 exe에 직접 포함 (COLLECT() 없음)
-    a.zipfiles,
     a.datas,
     [],
     name='sidecar',

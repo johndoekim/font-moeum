@@ -17,6 +17,11 @@ DefaultTable로 조용히 열화시키는데(크래시하지 않음), 이후 cma
 sidecar.py를 직접 돌리면 통과하는데 빌드된 exe에서만 실패한다면 그건
 PyInstaller 번들링 문제(원하는 신호)다.
 
+check_inspect가 scripts/test_otf2ttf.py의 build_cff_font를 import하므로,
+이 스크립트를 실행하는 환경에는 dev 그룹(pytest 등)이 설치되어 있어야 한다
+(`uv run --directory scripts python smoke_sidecar.py ...` — `--no-dev`로 설치된
+환경에서는 ImportError로 실패한다).
+
 실패 시 무엇이 실패했는지 stderr에 메시지를 남기고 종료코드 1.
 성공 시 요약을 stdout에 남기고 종료코드 0.
 """

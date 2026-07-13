@@ -41,11 +41,9 @@ def run_pyinstaller() -> None:
             cwd=SCRIPT_DIR,
             check=True,
         )
-    except FileNotFoundError as e:
-        sys.exit(f"오류: PyInstaller를 실행할 수 없습니다 — {e}\n"
-                 f"'uv sync --directory scripts --group dev'로 설치되어 있는지 확인하세요.")
     except subprocess.CalledProcessError as e:
-        sys.exit(f"오류: PyInstaller 빌드 실패 (종료 코드 {e.returncode})")
+        sys.exit(f"오류: PyInstaller 빌드 실패 (종료 코드 {e.returncode})\n"
+                 f"'uv sync --directory scripts --group dev'로 설치되어 있는지 확인하세요.")
 
 
 def detect_target_triple() -> str:
@@ -84,8 +82,8 @@ def copy_to_binaries(triple: str) -> Path:
 
 
 def main() -> None:
+    triple = detect_target_triple()  # rustc 부재 시 PyInstaller 빌드 전에 fail-fast
     run_pyinstaller()
-    triple = detect_target_triple()
     dest = copy_to_binaries(triple)
     print(f"[build_sidecar] 완료: {dest}")
 

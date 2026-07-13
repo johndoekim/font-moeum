@@ -70,6 +70,8 @@ function App() {
   const mergeKeyRef = useRef<() => string>(() => "");
   // 마지막으로 자동 채운 출력 이름 — 입력칸이 자동값 그대로인지(=사용자 미편집) 판정용.
   const lastAutoNameRef = useRef(DEFAULT_NAMES.basic);
+  // 직전에 계산된 파생 이름 — 값이 안 바뀌었으면 effect가 필드를 아예 안 건드리게 하는 가드용.
+  const lastDerivedRef = useRef(DEFAULT_NAMES.basic);
 
   // 일시적 안내 — 몇 초 뒤 사라지고 기본 상태 표시(라틴 우선 폰트 등)로 돌아간다
   function flashNotice(msg: string) {
@@ -270,6 +272,12 @@ function App() {
   // outName은 의도적으로 의존성에서 제외 — 사용자 타이핑이 이 effect를 재발화시키지 않게 한다.
   useEffect(() => {
     const next = deriveDefaultName(fonts, mode);
+    // 파생 이름이 직전과 같으면 필드를 아예 건드리지 않는다 — OTF inspect가 수 초 뒤 setFonts를
+    // 다시 쏘아 이 effect가 재발화해도(같은 familyName → 같은 next), 그 사이 사용자가 비워 둔
+    // 입력칸을 도로 채우지 않게 하고 불필요한 재렌더도 없앤다. lastAutoNameRef가 아니라 별도
+    // lastDerivedRef로 판정 — 사용자가 편집해 채움을 건너뛴 경우에도 파생값 추적이 이어진다.
+    if (next === lastDerivedRef.current) return;
+    lastDerivedRef.current = next;
     if (outName === lastAutoNameRef.current || outName.trim() === "") {
       lastAutoNameRef.current = next;
       setOutName(next);

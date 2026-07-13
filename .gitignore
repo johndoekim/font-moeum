@@ -26,8 +26,6 @@ __pycache__/
 
 # 개인 작업 문서 (커밋 제외)
 CLAUDE.md
-docs/TODO.md
-docs/REFERENCE.md
 docs/design_sample/
 
 # Editor directories and files

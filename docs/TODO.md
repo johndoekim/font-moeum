@@ -101,7 +101,7 @@
 - [x] **7b.** `load_ttf` 통합 — 변환 훅 + `.ttfcache` 디스크 캐시(mtime 신선도) + CFF2 거부 · (반나절)
 - [x] **7c.** 사이드카 `inspect`에 `converted_from_otf` 필드 + Rust 교체 시 캐시 청소 · (한두 시간)
 - [x] **7d.** 프론트 — 확장자 게이트 `.otf` 허용, 슬롯 "OTF→TTF" 배지(툴팁: 곡선 근사·힌팅 소실), inspect `ok:false`를 슬롯 에러로 표면화(CFF2가 업로드 시점에 보임), 문구 TTF/OTF · (반나절)
-- [ ] **7e.** 실폰트 검증 — OFL OTF(Noto Sans KR, Source Code Pro)로 CLI 4조합 매트릭스 + 앱 확인 · (반나절)
+- [x] **7e.** 실폰트 검증 — OFL OTF(Noto Sans KR, Source Code Pro)로 CLI 4조합 매트릭스 + 앱 확인 · (반나절) → 수동 검증 완료 (DepartureMono OTF + LXGW WenKai Mono KR)
 
 **완료 기준:** 4개 입력 조합 모두 CLI·앱에서 병합·저장되고, OTF 업로드 시 배지가 뜨며, 재조정 루프 속도는 TTF와 동일(변환은 업로드 시 1회).
 

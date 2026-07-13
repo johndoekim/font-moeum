@@ -65,6 +65,9 @@ impl Sidecar {
             // stderr(fontTools 경고 등)를 파일로 남겨 버그 리포트에 쓴다. 로그
             // 파일을 못 만들어도 병합 자체는 막지 않고 stderr를 버린다.
             let log_path = work_dir.join("sidecar.log");
+            // 크래시 후 재기동 시 직전 세션 stderr 트레이스백이 곧바로 덮어써지지
+            // 않도록 .prev로 한 세대 보존한다 (실패해도 로깅은 부수 기능이므로 무시).
+            let _ = std::fs::rename(&log_path, log_path.with_extension("log.prev"));
             let stderr = std::fs::File::create(&log_path)
                 .map(Stdio::from)
                 .unwrap_or_else(|_| Stdio::null());

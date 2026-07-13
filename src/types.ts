@@ -6,6 +6,7 @@ export interface LoadedFont {
   family: string;
   fileName: string;
   upem: number | null; // head.unitsPerEm (파싱 실패 시 null)
+  familyName?: string; // name 테이블 패밀리 이름(없으면 파일명 stem) — 기본 출력 이름 생성용
   monospace?: boolean; // 사이드카 inspect 판정 — undefined = 미판정/실패(배지 미표시)
   convertedFromOtf?: boolean; // 사이드카 inspect 판정 — OTF(CFF) 입력, 병합 시 TTF로 변환됨
 }

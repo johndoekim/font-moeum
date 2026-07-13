@@ -4,7 +4,8 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { DEFAULT_SAMPLE, FONT_SAMPLES, FontSample } from "./samples";
 import type { LoadedFont, MergedEntry, SlotId, MergeMode, Style, BasicOpts, MonoOpts } from "./types";
 import { SLOT_INFO, BASIC_DEFAULTS, MONO_DEFAULTS, DEFAULT_NAMES, STYLES, UPEM_MIN, UPEM_MAX } from "./types";
-import { readUnitsPerEm } from "./fontUtils";
+import { readFamilyName, readUnitsPerEm } from "./fontUtils";
+import { deriveDefaultName } from "./outputName";
 import { buildStatus } from "./status";
 import { tokenizeLine, LANG_NAME } from "./syntax";
 import { FontSlot } from "./FontSlot";
@@ -67,6 +68,10 @@ function App() {
   // 스케줄러가 항상 "최신" 옵션으로 돌게 하기 위한 최신 함수 스냅샷 (stale closure 방지)
   const mergeFontsRef = useRef<() => Promise<void>>(async () => {});
   const mergeKeyRef = useRef<() => string>(() => "");
+  // 마지막으로 자동 채운 출력 이름 — 입력칸이 자동값 그대로인지(=사용자 미편집) 판정용.
+  const lastAutoNameRef = useRef(DEFAULT_NAMES.basic);
+  // 직전에 계산된 파생 이름 — 값이 안 바뀌었으면 effect가 필드를 아예 안 건드리게 하는 가드용.
+  const lastDerivedRef = useRef(DEFAULT_NAMES.basic);
 
   // 일시적 안내 — 몇 초 뒤 사라지고 기본 상태 표시(라틴 우선 폰트 등)로 돌아간다
   function flashNotice(msg: string) {
@@ -103,7 +108,9 @@ function App() {
       document.fonts.add(face);
       facesRef.current[slot] = face;
       const upem = readUnitsPerEm(buffer);
-      setFonts((prevFonts) => ({ ...prevFonts, [slot]: { family, fileName: file.name, upem } }));
+      // name 테이블 패밀리 이름(없으면 파일명 stem) — 기본 출력 이름 생성용.
+      const familyName = readFamilyName(buffer) ?? file.name.replace(/\.[^.]+$/, "");
+      setFonts((prevFonts) => ({ ...prevFonts, [slot]: { family, fileName: file.name, upem, familyName } }));
       setErrors((prevErrors) => ({ ...prevErrors, [slot]: null }));
       clearMerged();
       // 병합용으로 Rust에 바이트 업로드 (웹뷰는 파일 경로를 모르므로)
@@ -254,17 +261,29 @@ function App() {
     }
   }
 
-  // 모드 전환 — 사용자가 이름을 안 건드렸으면(빈칸/기본이름) 새 모드 기본 이름으로 교체.
+  // 모드 전환 — 이름 자동 반영은 아래 effect가 담당(mode가 의존성). 여기선 모드만 바꾼다.
   function switchMode(next: MergeMode) {
     if (next === mode) return;
-    setOutName((cur) => {
-      const t = cur.trim();
-      return t === "" || t === DEFAULT_NAMES.basic || t === DEFAULT_NAMES.mono
-        ? DEFAULT_NAMES[next]
-        : cur;
-    });
     setMode(next);
   }
+
+  // 기본 출력 이름 자동 반영 — 폰트 로드·교체·스왑·모드 전환마다 A-B 이름으로 갱신하되,
+  // 사용자가 입력칸을 직접 편집했으면(자동값과 달라졌으면) 그 값을 지킨다. 빈칸은 "미편집"으로 간주.
+  // outName은 의도적으로 의존성에서 제외 — 사용자 타이핑이 이 effect를 재발화시키지 않게 한다.
+  useEffect(() => {
+    const next = deriveDefaultName(fonts, mode);
+    // 파생 이름이 직전과 같으면 필드를 아예 건드리지 않는다 — OTF inspect가 수 초 뒤 setFonts를
+    // 다시 쏘아 이 effect가 재발화해도(같은 familyName → 같은 next), 그 사이 사용자가 비워 둔
+    // 입력칸을 도로 채우지 않게 하고 불필요한 재렌더도 없앤다. lastAutoNameRef가 아니라 별도
+    // lastDerivedRef로 판정 — 사용자가 편집해 채움을 건너뛴 경우에도 파생값 추적이 이어진다.
+    if (next === lastDerivedRef.current) return;
+    lastDerivedRef.current = next;
+    if (outName === lastAutoNameRef.current || outName.trim() === "") {
+      lastAutoNameRef.current = next;
+      setOutName(next);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fonts, mode]);
 
   // 스케줄러가 참조할 "최신" 스냅샷을 매 렌더 갱신 — setTimeout/코얼레싱이 stale 옵션으로
   // 돌지 않게 한다. requestAutoMerge는 useCallback([])이라 이 refs로만 최신값에 닿는다.

@@ -48,13 +48,19 @@ export function readFamilyName(buffer: ArrayBuffer): string | null {
     for (let i = 0; i < count; i++) {
       const rec = nameOffset + 6 + i * 12;
       const platformID = dv.getUint16(rec);
+      const languageID = dv.getUint16(rec + 4);
       const nameID = dv.getUint16(rec + 6);
       if (nameID !== 1 && nameID !== 16) continue;
       const len = dv.getUint16(rec + 8);
       const off = dv.getUint16(rec + 10);
-      const idScore = nameID === 16 ? 2 : 1;
+      // 영어 이름을 최우선 — 라틴 기본 출력 이름에 적합. 한 폰트가 여러 언어의 같은
+      // nameID를 가질 때(예: 중국어·한국어·영어) 비영어 이름이 뽑히는 것을 막는다.
+      // 그다음 nameID 16(Typographic) > 1, 마지막으로 Windows > Mac > 기타.
+      const english = (platformID === 3 && languageID === 0x409) || (platformID === 1 && languageID === 0);
+      const langScore = english ? 1 : 0;
+      const idScore = nameID === 16 ? 1 : 0;
       const platScore = platformID === 3 ? 2 : platformID === 1 ? 1 : 0;
-      const score = platScore * 10 + idScore;
+      const score = langScore * 100 + idScore * 10 + platScore;
       if (!best || score > best.score) {
         best = { score, off: stringBase + off, len, win: platformID === 3 };
       }

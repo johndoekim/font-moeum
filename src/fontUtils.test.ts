@@ -129,6 +129,23 @@ describe("readFamilyName", () => {
     expect(readFamilyName(buf)).toBe("Spacey");
   });
 
+  it("prefers the English (0x409) name over other languages for the same nameID/platform", () => {
+    const buf = makeSfntWithName([
+      { platformID: 3, encodingID: 1, languageID: 0x404, nameID: 1, text: "中文名称" },
+      { ...WIN, nameID: 1, text: "English Name" },
+      { platformID: 3, encodingID: 1, languageID: 0x412, nameID: 1, text: "한국어 이름" },
+    ]);
+    expect(readFamilyName(buf)).toBe("English Name");
+  });
+
+  it("prefers an English nameID 1 over a non-English nameID 16", () => {
+    const buf = makeSfntWithName([
+      { platformID: 3, encodingID: 1, languageID: 0x412, nameID: 16, text: "한국어 타이포" },
+      { ...WIN, nameID: 1, text: "English Family" },
+    ]);
+    expect(readFamilyName(buf)).toBe("English Family");
+  });
+
   it("returns null when there is no name table", () => {
     // 'name'이 아닌 테이블만 있는 sfnt (기존 makeSfnt 재사용)
     expect(readFamilyName(makeSfnt("head", 1000))).toBeNull();

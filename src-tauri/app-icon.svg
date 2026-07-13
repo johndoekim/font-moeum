@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#2E3346"/>
@@ -9,13 +9,13 @@
   <!-- background: rounded square, ~20% corner radius -->
   <rect x="0" y="0" width="1024" height="1024" rx="205" ry="205" fill="url(#bg)"/>
 
-  <!-- 'ㅁ': rounded-corner square stroke, top ~55% of the glyph -->
-  <rect x="252" y="210" width="520" height="380" rx="56" ry="56"
+  <!-- 'ㅁ': rounded-corner square stroke, top of the glyph (visual box 604x464, x 210..814) -->
+  <rect x="252" y="184" width="520" height="380" rx="56" ry="56"
         fill="none" stroke="#F5F1E8" stroke-width="84"/>
 
-  <!-- 'ㅗ': short vertical bar -->
-  <rect x="470" y="610" width="84" height="150" rx="20" ry="20" fill="#F5F1E8"/>
+  <!-- 'ㅗ': short vertical bar — clear 52px gap below the ㅁ box (box visual bottom y=606) -->
+  <rect x="470" y="658" width="84" height="150" rx="20" ry="20" fill="#F5F1E8"/>
 
-  <!-- 'ㅗ': long horizontal bar -->
-  <rect x="210" y="760" width="604" height="84" rx="42" ry="42" fill="#F5F1E8"/>
+  <!-- 'ㅗ': long horizontal bar — wider (728) than the ㅁ box (604), like real 모 typography -->
+  <rect x="148" y="798" width="728" height="84" rx="42" ry="42" fill="#F5F1E8"/>
 </svg>

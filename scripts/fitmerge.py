@@ -1,7 +1,8 @@
 """font-moeum 코딩 폰트 병합 엔진 (fitmerge).
 
-고정폭 영문 TTF(A)를 베이스로 열고, 한글 TTF(B)의 CJK 글리프를 펜 파이프라인으로
-스케일·중앙정렬해 A에 복사한다 (kuskhan/jetendard 방식). fontTools Merger를 쓰는
+고정폭 영문 폰트(A)를 베이스로 열고, 한글 폰트(B)의 CJK 글리프를 펜 파이프라인으로
+스케일·중앙정렬해 A에 복사한다 (kuskhan/jetendard 방식). 입력은 TTF/정적 OTF —
+load_ttf가 OTF를 로드 시 TTF로 변환한다. fontTools Merger를 쓰는
 merge.py와 달리 A의 테이블(GSUB 리가처·힌팅·세로 메트릭)을 그대로 보존하고,
 한글은 라틴 폭의 정수배 셀에 맞춰 들어간다 — 터미널/에디터용 코딩 폰트 특화.
 
@@ -506,7 +507,7 @@ def fit_merge_to_file(font_a, font_b, output, *, name="MoeumMono", style="Regula
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="fitmerge.py",
-        description="고정폭 영문 TTF(A)에 한글 TTF(B)의 CJK 글리프를 셀에 맞춰 복사한다 (코딩 폰트 모드).",
+        description="고정폭 영문 폰트(A)에 한글 폰트(B)의 CJK 글리프를 셀에 맞춰 복사한다 (코딩 폰트 모드). 입력 TTF/정적 OTF, 출력 TTF.",
     )
     parser.add_argument("font_a", type=Path, help="폰트 A — 고정폭 영문 베이스. 라틴·기호·리가처 담당")
     parser.add_argument("font_b", type=Path, help="폰트 B — 한글/CJK 글리프 공급")

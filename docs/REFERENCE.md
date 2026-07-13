@@ -15,8 +15,9 @@
 
 **OTF(CFF) 입력 — 로드 시 TTF 변환 (`scripts/otf2ttf.py`, Phase 7)**
 - fontTools Merger가 CFF를 못 합치므로 **병합은 항상 glyf(2차 곡선) 공간**에서 일어난다. 정적 OTF는 `load_ttf`(merge.py)가 로드 시점에 TTF로 변환 — 두 엔진(basic/mono)과 inspect가 이 로더 하나를 공유해 엔진 코드는 무변경. **출력은 항상 TTF** (병합 결과를 .otf로 재포장해도 곡선은 이미 근사본이라 품질 동일 + CFF 재구축 공수만 추가 — 기각된 설계)
-- **레시피** (fonttools Snippets/otf2ttf.py, MIT): `Cu2QuPen(TTGlyphPen, max_err, reverse_direction=True)` — max_err = 1.0×upem/1000(em의 0.1%, 시각적 구분 불가), 방향 반전은 PostScript(반시계)→TrueType(시계). glyf/loca 신설 → `CFF `/`VORG`/`DSIG` 삭제 → hmtx lsb=xMin 보정 → maxp 0.5→1.0 → post 2.0(글리프 이름 보존, 캐시 디버깅용) → sfntVersion 교체. **CFF 힌팅은 소실**(UI 배지 툴팁에 명시). T2 seac 합성은 draw 중 평탄화돼 결과는 전부 단순 글리프
-- **디스크 캐시:** `<원본>.ttfcache`(같은 디렉터리). 유효 = 존재 + **원본보다 mtime 엄격히 최신** + glyf 포함으로 열림. mtime 검사는 필수 — 앱의 `upload_{n}` 파일명 seq가 세션마다 리셋되는데 work_dir(%TEMP%\font-moeum)은 지속되어 같은 경로가 다른 내용으로 재사용된다. 쓰기는 tmp 후 `os.replace`(원자적), 쓰기 실패 시 무캐시 진행. 업로드 직후 프론트가 inspect를 호출하므로 변환(대형 한글 OTF 수 초)은 **업로드 시 1회 선지불** — 재조정 루프는 TTF와 동일 속도
+- **레시피** (fonttools Snippets/otf2ttf.py, MIT): `Cu2QuPen(TTGlyphPen, max_err, reverse_direction=True)` — max_err = 1.0×upem/1000(em의 0.1%, 시각적 구분 불가), 방향 반전은 PostScript(반시계)→TrueType(시계). glyf/loca 신설 → `CFF `/`VORG`/`DSIG` 삭제 → hmtx lsb=xMin 보정 → maxp 0.5→1.0(maxZones=1 — 0은 스펙 위반) → post 2.0(글리프 이름 보존, 캐시 디버깅용 — 비표준 이름 65,279개 초과 CID 폰트는 uint16 한계로 3.0 폴백) → sfntVersion 교체. **CFF 힌팅은 소실**(UI 배지 툴팁에 명시). T2 seac(악센트 합성)는 컴포지트 글리프로 보존된다(참조 글리프도 함께 변환되므로 유효)
+- **디스크 캐시:** `<원본>.ttfcache` + `.ttfcache.meta`(같은 디렉터리). 유효 = meta에 기록된 원본 신원 **(size, mtime_ns)** 이 현재 원본과 일치 + 캐시가 glyf 포함으로 열림. 신원 검사는 필수 — 앱의 `upload_{n}` 파일명 seq가 세션마다 리셋되는데 work_dir(%TEMP%\font-moeum)은 지속되어 같은 경로가 다른 내용으로 재사용되고, mtime 단독 비교는 과거 mtime을 보존하는 교체(zip 해제·cp -p)에 뚫린다(fitmerge B-분석 캐시와 같은 기준). 쓰기는 tmp 후 `os.replace`(원자적, 실패 시 tmp 정리 후 무캐시 진행). 업로드 직후 프론트가 inspect를 호출하므로 변환(대형 한글 OTF 수 초)은 **업로드 시 1회 선지불** — 재조정 루프는 TTF와 동일 속도
+- **배지 판정 = 실제 변환 기준:** `needs_conversion()`은 sfnt 태그가 아니라 load_ttf와 같은 테이블 기준(glyf 부재 ∧ CFF 존재) — glyf+CFF 공존(변환 안 함)·TrueType 태그를 단 CFF 폰트(변환함)에서도 배지가 거짓말하지 않는다
 - CFF2(가변 OTF)는 거부(축 소실이 사용자 기대와 어긋남), glyf+CFF 공존 비정상 폰트는 glyf 우선. 대형 Pan-CJK OTF(SourceHanSans 풀버전 ≈ 65k 글리프)는 병합 후 65,535 한계(위 Merger 제약 마지막 항목)에 걸릴 수 있음
 - cu2qu는 fonttools 내장(MIT) — 라이선스 추가 부담 없음. FontForge(GPL) 경로는 여전히 금지
 

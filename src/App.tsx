@@ -112,24 +112,37 @@ function App() {
       // 배지와 병합 검증이 어긋나지 않는다. 전송 실패·미응답은 무시(배지 없음).
       // ok:false(가변 OTF(CFF2) 등)는 슬롯 에러로 표면화 — FontFace는 CFF2도 잘 렌더링해
       // 브라우저가 못 걸러주므로, 첫 병합이 아니라 업로드 시점에 알려야 한다.
-      // family 가드: 응답이 오기 전에 같은 슬롯에 새 파일이 올라오면 낡은 판정을 버린다.
+      // 슬롯은 face 역탐색으로 정한다: 응답 대기 중 스왑되면 face가 반대 슬롯으로
+      // 이동하므로, 업로드 시점 슬롯이 아니라 지금 face가 있는 슬롯에 적용해야
+      // 판정이 유실되지 않는다(OTF 변환 inspect는 수 초 — 그 사이 스왑 가능).
+      // face가 어느 슬롯에도 없으면(새 파일로 교체) 폐기. 한계: 스왑이 Rust의
+      // 경로 확정보다 먼저 끝나는 ms급 창에서는 반대 폰트의 판정이 붙을 수 있으나
+      // 배지/에러 표시 한정이고 재업로드로 복구된다.
       void invoke<{ ok?: boolean; error?: string; monospace?: boolean; converted_from_otf?: boolean }>(
         "inspect_font",
         { slot },
       )
         .then((r) => {
-          if (facesRef.current[slot] !== face) return;
+          const slotNow = (["a", "b"] as const).find((s) => facesRef.current[s] === face);
+          if (!slotNow) return;
           if (r?.ok === false && typeof r?.error === "string") {
-            setErrors((prev) => ({ ...prev, [slot]: r.error ?? null }));
+            // 백엔드가 거부한 폰트는 미리보기·병합 경로에서도 내린다 — 에러 타일인데
+            // 미리보기는 그 폰트로 렌더링되고 병합 버튼이 살아 있는 반쪽 상태 방지.
+            // 에러 메시지의 내부 임시 파일명(upload_N.ttf)은 사용자 파일명으로 치환.
+            document.fonts.delete(face);
+            facesRef.current[slotNow] = null;
+            setFonts((prev) => ({ ...prev, [slotNow]: null }));
+            const msg = r.error.replace(/^upload_\d+\.ttf:\s*/, "");
+            setErrors((prev) => ({ ...prev, [slotNow]: `${file.name}: ${msg}` }));
             return;
           }
           if (typeof r?.monospace !== "boolean") return;
           setFonts((prev) =>
-            prev[slot]?.family === family
+            prev[slotNow]?.family === family
               ? {
                   ...prev,
-                  [slot]: {
-                    ...prev[slot],
+                  [slotNow]: {
+                    ...prev[slotNow],
                     monospace: r.monospace,
                     convertedFromOtf: r.converted_from_otf === true,
                   },

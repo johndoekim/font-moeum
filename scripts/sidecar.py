@@ -38,7 +38,7 @@ from pathlib import Path
 from fontTools import version as fonttools_version
 
 from fitmerge import check_monospace, fit_merge_to_file
-from merge import MergeError, is_cff_flavored, load_ttf, merge_to_file
+from merge import MergeError, load_ttf, merge_to_file, needs_conversion
 
 
 # pytest 등이 스트림을 교체하면 reconfigure가 없을 수 있다 — 실제 사이드카
@@ -82,7 +82,7 @@ def _inspect(req: dict) -> dict:
     (check_monospace)가 같은 코드를 쓰는 단일 진실원. OTF면 load_ttf가 여기서
     변환+캐시를 선지불한다. 열기 실패(MergeError)는 호출자에서 ok:false로 변환."""
     path = Path(req["path"])
-    converted = is_cff_flavored(path)
+    converted = needs_conversion(path)
     font = load_ttf(path)
     try:
         check_monospace(font)

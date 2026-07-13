@@ -16,19 +16,19 @@ from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 
-from merge import MergeError, is_cff_flavored, load_ttf
+from merge import MergeError, load_ttf, needs_conversion
 from otf2ttf import otf_to_ttf
 
 UPEM = 1000
 ADVANCE = 600
 
 
-def build_cff_font() -> TTFont:
+def build_cff_font(letter: str = "A") -> TTFont:
     """진짜 3차 곡선(curveTo)을 가진 글리프를 포함하는 최소 CFF OTF."""
-    glyph_order = [".notdef", "space", "A"]
+    glyph_order = [".notdef", "space", letter]
     fb = FontBuilder(UPEM, isTTF=False)
     fb.setupGlyphOrder(glyph_order)
-    fb.setupCharacterMap({0x20: "space", 0x41: "A"})
+    fb.setupCharacterMap({0x20: "space", ord(letter): letter})
 
     pen = T2CharStringPen(ADVANCE, None)
     pen.moveTo((100, 0))
@@ -36,7 +36,7 @@ def build_cff_font() -> TTFont:
     pen.curveTo((200, 800), (400, 800), (500, 700))  # 3차 곡선 — 변환 대상
     pen.lineTo((500, 0))
     pen.closePath()
-    charstrings = {"A": pen.getCharString()}
+    charstrings = {letter: pen.getCharString()}
     for name in (".notdef", "space"):
         charstrings[name] = T2CharStringPen(ADVANCE, None).getCharString()
 
@@ -65,8 +65,29 @@ def test_tables_and_flavor():
     assert "CFF " not in font
     assert font.sfntVersion == "\x00\x01\x00\x00"
     assert font["maxp"].tableVersion == 0x00010000
+    assert font["maxp"].maxZones == 1  # 스펙상 1|2만 유효 — 0은 검증기가 플래그
     assert font["post"].formatType == 2.0  # 글리프 이름 보존 (캐시 파일 디버깅 편의)
     assert font["head"].unitsPerEm == UPEM
+
+
+def test_post_falls_back_to_format3_on_huge_glyph_count():
+    """비표준 이름 65,279개 초과(풀버전 Pan-CJK CID OTF)는 post 2.0 인코딩(uint16) 불가 —
+    업스트림 스니펫과 동일하게 3.0으로 낙하해야 저장이 죽지 않는다."""
+    n = 65_300
+    glyph_order = [".notdef"] + [f"cid{i:05d}" for i in range(1, n)]
+    fb = FontBuilder(UPEM, isTTF=False)
+    fb.setupGlyphOrder(glyph_order)
+    fb.setupCharacterMap({0x41: "cid00001"})
+    empty = T2CharStringPen(ADVANCE, None).getCharString()
+    fb.setupCFF("Huge-Regular", {}, {name: empty for name in glyph_order}, {})
+    fb.setupHorizontalMetrics({name: (ADVANCE, 0) for name in glyph_order})
+    fb.setupHorizontalHeader(ascent=800, descent=-200)
+    fb.setupNameTable({"familyName": "Huge", "styleName": "Regular"})
+    fb.setupOS2()
+    fb.setupPost()
+    font = fb.font
+    otf_to_ttf(font)
+    assert font["post"].formatType == 3.0
 
 
 def test_outlines_are_quadratic():
@@ -170,6 +191,60 @@ def test_load_ttf_reconverts_stale_cache(tmp_path):
     assert "Z" not in order and "A" in order
 
 
+def test_load_ttf_reconverts_replaced_source_with_older_mtime(tmp_path):
+    """zip 해제·cp -p 등은 과거 mtime을 보존한다 — mtime 단독 비교면 낡은 캐시가 이긴다.
+    신원은 fitmerge B-분석 캐시와 같은 (size, mtime_ns) 기준이어야 한다."""
+    src = tmp_path / "font.otf"
+    build_cff_font("A").save(str(src))
+    load_ttf(src)  # 캐시 생성 (글리프 A)
+    old = src.stat()
+    build_cff_font("B").save(str(src))  # 같은 경로를 다른 내용으로 교체
+    os.utime(src, ns=(old.st_atime_ns, old.st_mtime_ns - 3_600_000_000_000))  # 1시간 과거
+    order = load_ttf(src).getGlyphOrder()
+    assert "B" in order and "A" not in order
+
+
+def test_load_ttf_glyf_cff_coexistence_prefers_glyf(tmp_path):
+    """비정상 폰트(glyf+CFF 공존)는 glyf를 그대로 쓰고 CFF만 제거 — 변환·캐시 없음."""
+    hybrid = build_ttf_marker_font()
+    hybrid["CFF "] = build_cff_font()["CFF "]
+    src = tmp_path / "hybrid.otf"
+    hybrid.save(str(src))
+    loaded = load_ttf(src)
+    assert "glyf" in loaded and "CFF " not in loaded
+    assert "Z" in loaded.getGlyphOrder()
+    assert not (tmp_path / "hybrid.otf.ttfcache").exists()
+
+
+def test_load_ttf_rejects_unknown_outline_format(tmp_path):
+    font = build_ttf_marker_font()
+    buf = io.BytesIO()
+    font.save(buf)
+    buf.seek(0)
+    stripped = TTFont(buf)
+    del stripped["glyf"]
+    del stripped["loca"]
+    src = tmp_path / "weird.ttf"
+    stripped.save(str(src))
+    with pytest.raises(MergeError, match="알 수 없는 형식"):
+        load_ttf(src)
+
+
+def test_load_ttf_proceeds_uncached_on_cache_write_failure(tmp_path, monkeypatch):
+    """캐시 저장 실패는 로드를 죽이지 않고, tmp 잔류물도 남기지 않아야 한다."""
+    import merge as merge_mod
+
+    def boom(_src, _dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(merge_mod.os, "replace", boom)
+    src = tmp_path / "font.otf"
+    build_cff_font().save(str(src))
+    font = load_ttf(src)
+    assert "glyf" in font and "A" in font.getGlyphOrder()
+    assert list(tmp_path.glob("*.ttfcache*")) == []  # 캐시도 tmp도 없어야 함
+
+
 def test_load_ttf_recovers_from_corrupt_cache(tmp_path):
     src = tmp_path / "font.otf"
     build_cff_font().save(str(src))
@@ -203,10 +278,23 @@ def test_inspect_reports_otf_conversion(tmp_path):
     assert _inspect({"path": str(ttf)})["converted_from_otf"] is False
 
 
-def test_is_cff_flavored(tmp_path):
+def test_needs_conversion_matches_actual_behavior(tmp_path):
+    """배지 판정은 load_ttf와 같은 기준(테이블 존재)이어야 한다 — sfnt 태그가 아니라."""
     otf = tmp_path / "a.otf"
     build_cff_font().save(str(otf))
     ttf = tmp_path / "b.ttf"
     build_ttf_marker_font().save(str(ttf))
-    assert is_cff_flavored(otf) is True
-    assert is_cff_flavored(ttf) is False
+    assert needs_conversion(otf) is True
+    assert needs_conversion(ttf) is False
+    # TrueType 태그를 단 CFF-only 폰트: 실제로 변환되므로 True여야 한다
+    mislabeled = build_cff_font()
+    mislabeled.sfntVersion = "\x00\x01\x00\x00"
+    mp = tmp_path / "mislabeled.ttf"
+    mislabeled.save(str(mp))
+    assert needs_conversion(mp) is True
+    # glyf+CFF 공존: glyf 우선이라 변환 없음 → False여야 한다
+    hybrid = build_ttf_marker_font()
+    hybrid["CFF "] = build_cff_font()["CFF "]
+    hp = tmp_path / "hybrid.otf"
+    hybrid.save(str(hp))
+    assert needs_conversion(hp) is False

@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![GitHub Release](https://img.shields.io/github/v/release/johndoekim/font-moeum)](https://github.com/johndoekim/font-moeum/releases)
 
-![데모](docs/media/demo.gif)
+<!-- 캡처 후 주석 해제: ![데모](docs/media/demo.gif) -->
 <!-- 캡처 가이드: ScreenToGif(Windows) 또는 LICEcap(macOS/Windows) 사용. 창 크기 1120×720(앱 기본 창 크기).
      시나리오(15~20초): 폰트 슬롯에 영문 폰트(A)·한글 폰트(B) 드래그 → 병합 →
      미리보기 영역에 타이핑 → 크기·줄높이 슬라이더 조정 → A/B 스왑 → "TTF로 저장…". -->
@@ -52,15 +52,15 @@ CLI로 폰트를 합치는 것 자체는 어렵지 않습니다. 어려운 건 "
 5. 사이드바 상단의 **A/B 스왑**(⇅) 버튼으로 라틴 우선권을 뒤집어 비교할 수 있습니다.
 6. **출력** 섹션에서 이름(자동으로 채워짐, 직접 수정 가능)과 스타일 라벨을 확인하고 **TTF로 저장…**으로 내보냅니다.
 
-![일반 모드 사용법](docs/media/usage-basic.png)
+<!-- 캡처 후 주석 해제: ![일반 모드 사용법](docs/media/usage-basic.png) -->
 <!-- 캡처 가이드: 일반 모드에서 A·B 폰트 로드 완료 + 병합 결과가 미리보기에 표시된 상태.
      사이드바의 "라틴 담당"/"CJK 담당" 세그먼트가 보이게. -->
 
-![코딩 폰트 모드 사용법](docs/media/usage-mono.png)
+<!-- 캡처 후 주석 해제: ![코딩 폰트 모드 사용법](docs/media/usage-mono.png) -->
 <!-- 캡처 가이드: 코딩 폰트 모드에서 고급 패널(한글 스케일·폭 배수·세로 오프셋 등) 펼친 상태 +
      고정폭 정렬된 미리보기(코드 샘플 탭 권장). -->
 
-![출력 저장](docs/media/usage-export.png)
+<!-- 캡처 후 주석 해제: ![출력 저장](docs/media/usage-export.png) -->
 <!-- 캡처 가이드: "출력" 섹션(이름 입력·스타일 드롭다운·"TTF로 저장…" 버튼)이 보이는 상태.
      저장 파일 다이얼로그가 함께 보이면 더 좋음. -->
 

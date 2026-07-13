@@ -5,3 +5,8 @@ requires-python = ">=3.13"
 dependencies = [
     "fonttools>=4.63.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]

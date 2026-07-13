@@ -55,8 +55,8 @@ export function buildStatus(s: StatusInput): { text: string; className: string; 
             : s.fontsA || s.fontsB
               ? "폰트 1개 적용 중 — 나머지 슬롯도 채우면 함께 미리 볼 수 있습니다"
               : s.mode === "mono"
-                ? "베이스(A)·한글(B) TTF를 올리면 함께 미리 볼 수 있습니다"
-                : "우선(A)·보충(B) TTF를 올리면 함께 미리 볼 수 있습니다";
+                ? "베이스(A)·한글(B) TTF/OTF를 올리면 함께 미리 볼 수 있습니다"
+                : "우선(A)·보충(B) TTF/OTF를 올리면 함께 미리 볼 수 있습니다";
   const className = s.mergeError
     ? "sb-item sb-error"
     : s.merged || s.notice

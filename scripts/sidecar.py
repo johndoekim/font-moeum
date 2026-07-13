@@ -22,7 +22,10 @@
                "hanja_copied": 4888, "ccmp_rules": 40, "warnings": []}}
 
   → {"cmd": "inspect", "path": "..."}
-  ← {"ok": true, "monospace": true}               (열기 실패 시 {"ok": false, "error": "..."})
+  ← {"ok": true, "monospace": true, "converted_from_otf": false}
+     (converted_from_otf: 정적 OTF(CFF) 입력 — 병합 시 TTF로 변환됨을 UI 배지로 알림.
+      최초 inspect가 변환+디스크 캐시를 선지불한다. 가변 OTF(CFF2)·열기 실패는
+      {"ok": false, "error": "..."})
 
   → {"cmd": "quit"}                                (응답 없이 종료; stdin EOF도 동일)
 """
@@ -35,12 +38,14 @@ from pathlib import Path
 from fontTools import version as fonttools_version
 
 from fitmerge import check_monospace, fit_merge_to_file
-from merge import MergeError, load_ttf, merge_to_file
+from merge import MergeError, load_ttf, merge_to_file, needs_conversion
 
 
-sys.stdin.reconfigure(encoding="utf-8")
-sys.stdout.reconfigure(encoding="utf-8")
-sys.stderr.reconfigure(encoding="utf-8")
+# pytest 등이 스트림을 교체하면 reconfigure가 없을 수 있다 — 실제 사이드카
+# 기동(파이프 stdio)에서는 항상 존재.
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8")
 
 
 def _merge_basic(req: dict) -> dict:
@@ -73,14 +78,18 @@ def _merge_mono(req: dict) -> dict:
 
 
 def _inspect(req: dict) -> dict:
-    """폰트 고정폭 여부 판정 — UI 배지와 mono 엔진 하드 에러(check_monospace)가
-    같은 코드를 쓰는 단일 진실원. 열기 실패(MergeError)는 호출자에서 ok:false로 변환."""
-    font = load_ttf(Path(req["path"]))
+    """폰트 고정폭 여부 + OTF 변환 여부 판정 — UI 배지와 mono 엔진 하드 에러
+    (check_monospace)가 같은 코드를 쓰는 단일 진실원. OTF면 load_ttf가 여기서
+    변환+캐시를 선지불한다. 열기 실패(MergeError)는 호출자에서 ok:false로 변환."""
+    path = Path(req["path"])
+    converted = needs_conversion(path)
+    font = load_ttf(path)
     try:
         check_monospace(font)
+        monospace = True
     except MergeError:
-        return {"ok": True, "monospace": False}
-    return {"ok": True, "monospace": True}
+        monospace = False
+    return {"ok": True, "monospace": monospace, "converted_from_otf": converted}
 
 
 def handle(req: dict):

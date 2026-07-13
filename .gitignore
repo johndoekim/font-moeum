@@ -29,6 +29,13 @@ scripts/build/
 scripts/dist/
 src-tauri/binaries/
 
+# 샘플 폰트 — 커밋 허용 목록 외에는 로컬 전용 (대용량 폰트 실수 커밋 방지)
+sample/*
+!sample/README.md
+!sample/LICENSE-*
+!sample/D2Coding-Ver1.3.2-20180524.ttf
+!sample/JetBrainsMono-Regular.ttf
+
 # 개인 작업 문서 (커밋 제외)
 CLAUDE.md
 docs/design_sample/

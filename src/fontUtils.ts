@@ -42,8 +42,7 @@ export function readFamilyName(buffer: ArrayBuffer): string | null {
     const count = dv.getUint16(nameOffset + 2);
     const stringBase = nameOffset + dv.getUint16(nameOffset + 4);
 
-    // 후보를 점수로 골라 가장 좋은 하나만 디코드. 점수 = platScore*10 + idScore →
-    // 16/win > 1/win > 16/mac > 1/mac > 16/기타 > 1/기타 (spec 우선순위와 동일).
+    // 후보를 점수로 골라 가장 좋은 하나만 디코드 — 점수 규칙은 루프 안 주석 참고.
     let best: { score: number; off: number; len: number; win: boolean } | null = null;
     for (let i = 0; i < count; i++) {
       const rec = nameOffset + 6 + i * 12;

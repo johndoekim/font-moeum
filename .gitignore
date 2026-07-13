@@ -24,6 +24,11 @@ __pycache__/
 # OTF→TTF 변환 디스크 캐시 (CLI를 저장소 내 폰트로 돌리면 원본 옆에 생김)
 *.ttfcache
 
+# PyInstaller 사이드카 빌드 산출물 (scripts/dist는 위 dist 규칙과도 겹치지만 명시)
+scripts/build/
+scripts/dist/
+src-tauri/binaries/
+
 # 개인 작업 문서 (커밋 제외)
 CLAUDE.md
 docs/design_sample/

@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "lint": "eslint src",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:sidecar": "uv run --directory scripts python build_sidecar.py"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

@@ -40,3 +40,4 @@ docs/design_sample/
 *.njsproj
 *.sln
 *.sw?
+.coverage

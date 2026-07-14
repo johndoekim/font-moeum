@@ -57,7 +57,7 @@ jobs:
 
       - run: pnpm install
 
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v7
 
       # dev 그룹(pytest 등)을 기본 포함 — 아래 스모크가 scripts/test_otf2ttf.py의
       # 픽스처를 import하므로 --no-dev는 금지 (scripts/smoke_sidecar.py 상단 문서 참고).

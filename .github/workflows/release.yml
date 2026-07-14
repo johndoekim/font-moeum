@@ -1,7 +1,7 @@
 name: Release
 
-# 목적: font-moeum 배포 바이너리(Windows NSIS/MSI · macOS .app/.dmg · Linux
-# AppImage/deb)를 3개 러너 매트릭스에서 빌드한다.
+# 목적: font-moeum 배포 바이너리(Windows NSIS/MSI + 무설치 포터블 zip ·
+# macOS .app/.dmg · Linux AppImage/deb)를 3개 러너 매트릭스에서 빌드한다.
 #
 # 트리거 2종:
 #   - workflow_dispatch: 드라이런 — 3 OS 빌드 + artifact 업로드만, Release 생성 없음.
@@ -98,13 +98,6 @@ jobs:
         with:
           includeUpdaterJson: false # 업데이터 플러그인 미사용 — 서명 키 없음(범위 외)
 
-      - name: 드라이런 산출물 업로드
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v7
-        with:
-          name: font-moeum-${{ matrix.os }}
-          path: src-tauri/target/release/bundle/**
-
       - name: 빌드 + Release 생성 (태그 푸시)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: tauri-apps/tauri-action@v0
@@ -115,3 +108,35 @@ jobs:
           releaseName: 'font-moeum v__VERSION__'
           releaseDraft: true
           includeUpdaterJson: false
+
+      # 무설치 포터블: tauri build가 target/release에 나란히 놓은 메인 exe와 사이드카
+      # exe를 zip 하나로 묶는다(설치 없이 압축만 풀어 실행 — 사용자는 font-moeum.exe만
+      # 더블클릭, 사이드카는 앱이 자식 프로세스로 자동 실행). bundle/portable/ 아래 두면
+      # 아래 "드라이런 산출물 업로드"(bundle/**)가 자동으로 포함한다.
+      - name: 무설치 포터블 ZIP 생성 (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ver = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $rel = "src-tauri/target/release"
+          $out = "$rel/bundle/portable"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Compress-Archive -Path "$rel/font-moeum.exe","$rel/sidecar.exe" `
+            -DestinationPath "$out/font-moeum_${ver}_x64-portable.zip" -Force
+
+      - name: 드라이런 산출물 업로드
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: font-moeum-${{ matrix.os }}
+          path: src-tauri/target/release/bundle/**
+
+      # 포터블 zip은 tauri-action이 만드는 산출물이 아니므로 draft Release에 직접 첨부한다.
+      # 태그 푸시라 git tag가 이미 존재해 gh가 tag로 draft Release를 찾는다. --clobber로
+      # 재실행 멱등성 확보. contents:write 권한은 위 job permissions에 이미 설정됨.
+      - name: 포터블 ZIP을 Release에 첨부 (Windows, 태그 푸시)
+        if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${GITHUB_REF_NAME}" src-tauri/target/release/bundle/portable/*.zip --clobber

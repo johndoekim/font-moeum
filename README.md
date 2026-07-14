@@ -39,7 +39,10 @@ CLI로 폰트를 합치는 것 자체는 어렵지 않습니다. 어려운 건 "
 
 [Releases](https://github.com/johndoekim/font-moeum/releases)에서 플랫폼에 맞는 바이너리를 받으세요.
 
-- **Windows** — 코드 서명이 없어 SmartScreen이 실행을 막을 수 있습니다. "추가 정보" → "실행"을 눌러 진행하세요.
+- **Windows** — 두 가지 형태로 제공합니다.
+  - **설치 파일** — `font-moeum_x.x.x_x64-setup.exe`(NSIS) 또는 `.msi`를 실행해 설치합니다.
+  - **무설치(포터블)** — `font-moeum_x.x.x_x64-portable.zip`을 받아 압축을 풀고 `font-moeum.exe`를 더블클릭합니다. 같은 폴더의 `sidecar.exe`(폰트 병합 엔진)는 앱이 자동으로 실행하니 직접 열 필요는 없지만, 두 파일은 **같은 폴더에 함께** 있어야 합니다. WebView2 런타임이 필요하며 Windows 11·최신 Windows 10에는 기본 탑재돼 있습니다.
+  - 코드 서명이 없어 두 방식 모두 SmartScreen이 실행을 막을 수 있습니다. "추가 정보" → "실행"을 눌러 진행하세요.
 - **macOS** — 공증(notarization)이 없어 Gatekeeper가 앱을 막습니다. 터미널에서 `xattr -cr /Applications/font-moeum.app` 실행 후 여세요. Apple Silicon 빌드만 제공하며, Intel Mac은 아래 "소스에서 빌드"를 따라주세요.
 - **Linux** — AppImage 또는 deb 패키지를 제공합니다.
 

@@ -19,25 +19,66 @@ struct Sidecar {
 }
 
 impl Sidecar {
-    fn spawn(scripts_dir: &Path) -> Result<Self, String> {
-        // 개발 단계: scripts/.venv의 Python을 직접 실행 (Phase 5에서 PyInstaller 번들로 교체)
-        let python = scripts_dir
-            .join(".venv")
-            .join(if cfg!(windows) { "Scripts" } else { "bin" })
-            .join(if cfg!(windows) { "python.exe" } else { "python" });
-        if !python.is_file() {
-            return Err(format!(
-                "병합 엔진(Python)이 없습니다: {} — scripts/에서 `uv sync`를 실행하세요",
-                python.display()
-            ));
-        }
+    /// `work_dir`는 release 분기에서만 쓰인다(stderr 로그 파일 위치) — dev 분기는
+    /// 여전히 콘솔로 inherit하므로 무시된다.
+    fn spawn(scripts_dir: &Path, work_dir: &Path) -> Result<Self, String> {
+        let mut cmd = if cfg!(debug_assertions) {
+            // dev(`pnpm tauri dev`): scripts/.venv의 Python으로 sidecar.py를 직접
+            // 실행한다. release는 아래 else 분기에서 PyInstaller 번들 exe(Tauri
+            // externalBin)를 띄운다.
+            let python = scripts_dir
+                .join(".venv")
+                .join(if cfg!(windows) { "Scripts" } else { "bin" })
+                .join(if cfg!(windows) { "python.exe" } else { "python" });
+            if !python.is_file() {
+                return Err(format!(
+                    "병합 엔진(Python)이 없습니다: {} — scripts/에서 `uv sync`를 실행하세요",
+                    python.display()
+                ));
+            }
 
-        let mut cmd = Command::new(&python);
-        cmd.arg("sidecar.py")
-            .current_dir(scripts_dir)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit()); // fontTools 경고는 dev 콘솔로
+            let mut cmd = Command::new(&python);
+            cmd.arg("sidecar.py")
+                .current_dir(scripts_dir)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit()); // fontTools 경고는 dev 콘솔로
+            cmd
+        } else {
+            // release: externalBin이 트리플 접미사를 제거해 메인 exe와 같은
+            // 디렉터리에 `sidecar(.exe)`로 설치한다. 엔진은 모든 경로를
+            // 절대경로로 받으므로 스크립트 인자도 current_dir 지정도 필요 없다.
+            let exe_dir = std::env::current_exe()
+                .map_err(|e| format!("실행 파일 경로를 확인할 수 없습니다: {e}"))?
+                .parent()
+                .ok_or("실행 파일 경로에 상위 디렉터리가 없습니다")?
+                .to_path_buf();
+            let sidecar_exe = exe_dir.join(format!("sidecar{}", std::env::consts::EXE_SUFFIX));
+            if !sidecar_exe.is_file() {
+                return Err(format!(
+                    "병합 엔진이 설치에 없습니다: {} — 앱을 재설치해 주세요",
+                    sidecar_exe.display()
+                ));
+            }
+
+            // windows_subsystem="windows"(main.rs:2)라 inherit할 콘솔이 없다 —
+            // stderr(fontTools 경고 등)를 파일로 남겨 버그 리포트에 쓴다. 로그
+            // 파일을 못 만들어도 병합 자체는 막지 않고 stderr를 버린다.
+            let log_path = work_dir.join("sidecar.log");
+            // 크래시 후 재기동 시 직전 세션 stderr 트레이스백이 곧바로 덮어써지지
+            // 않도록 .prev로 한 세대 보존한다 (실패해도 로깅은 부수 기능이므로 무시).
+            let _ = std::fs::rename(&log_path, log_path.with_extension("log.prev"));
+            let stderr = std::fs::File::create(&log_path)
+                .map(Stdio::from)
+                .unwrap_or_else(|_| Stdio::null());
+
+            let mut cmd = Command::new(&sidecar_exe);
+            cmd.stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(stderr);
+            cmd
+        };
+
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -98,7 +139,7 @@ fn sidecar_call(state: &AppState, req: Value) -> Result<Value, String> {
         if let Some(mut s) = guard.take() {
             let _ = s.child.kill();
         }
-        *guard = Some(Sidecar::spawn(&state.scripts_dir)?);
+        *guard = Some(Sidecar::spawn(&state.scripts_dir, &state.work_dir)?);
     }
 
     let result = guard.as_mut().unwrap().request(&req);
@@ -261,7 +302,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            // 개발 단계: 저장소 루트의 scripts/ (Phase 5에서 번들 리소스로 교체)
+            // 저장소 루트의 scripts/ — dev 분기(Sidecar::spawn)에서만 쓰인다.
+            // release는 번들된 sidecar.exe를 직접 실행하므로 이 경로는 무시되고,
+            // 설치본에는 scripts/가 아예 없어도(존재하지 않아도) 무해하다.
             let scripts_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .parent()
                 .expect("src-tauri has parent")

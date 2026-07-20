@@ -39,6 +39,7 @@ sample/*
 # 개인 작업 문서 (커밋 제외)
 CLAUDE.md
 docs/design_sample/
+_workspace/
 
 # Editor directories and files
 .vscode/*

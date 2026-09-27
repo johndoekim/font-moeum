@@ -9,6 +9,16 @@ export interface LoadedFont {
   familyName?: string; // name 테이블 패밀리 이름(없으면 파일명 stem) — 기본 출력 이름 생성용
   monospace?: boolean; // 사이드카 inspect 판정 — undefined = 미판정/실패(배지 미표시)
   convertedFromOtf?: boolean; // 사이드카 inspect 판정 — OTF(CFF) 입력, 병합 시 TTF로 변환됨
+  variable?: VariableInfo; // 사이드카 inspect 판정 — 가변 폰트(fvar)의 축·이름 붙은 인스턴스
+}
+
+/** 가변 폰트 축 좌표 — {wght: 700}. 사이드카 instance_a/b로 그대로 전달된다. */
+export type AxisLocation = Record<string, number>;
+
+/** 사이드카 inspect의 variable 필드 (merge.py variable_info). */
+export interface VariableInfo {
+  axes: { tag: string; name: string; min: number; default: number; max: number }[];
+  instances: { name: string; coordinates: AxisLocation }[];
 }
 
 /** 병합 결과 캐시 항목 — 같은 (A업로드, B업로드, 옵션) 조합은 재병합 없이 복원.
@@ -72,6 +82,24 @@ export const MONO_DEFAULTS: MonoOpts = {
 };
 export const DEFAULT_NAMES: Record<MergeMode, string> = { basic: "MoeumMerged", mono: "MoeumMono" };
 export const STYLES: Style[] = ["Regular", "Bold", "Italic", "Bold Italic"];
+
+/** 글자 범위(서브셋 프리셋) — 병합 후 한글 음절·한자만 덜어낸다(subset_presets.py). 라틴·기호는 전부 유지. */
+export type SubsetPreset = "none" | "no_hanja" | "ksx1001";
+export const SUBSET_PRESETS: Record<SubsetPreset, { label: string; hint: string }> = {
+  none: { label: "전체", hint: "병합된 글자를 모두 유지" },
+  no_hanja: { label: "한자 제외", hint: "한자(CJK 통합·확장 A·호환)를 뺍니다" },
+  ksx1001: {
+    label: "KS X 1001",
+    hint: "한자를 빼고 한글을 완성형 2,350자로 줄입니다 — 웹폰트 용량 절감용. 빠진 글자는 미리보기에 □로 보입니다",
+  },
+};
+
+/** 저장 형식 — 병합 결과는 항상 TTF, WOFF2는 저장 시점에 사이드카가 압축한다(캐시·재병합 무관). */
+export type ExportFormat = "ttf" | "woff2";
+export const EXPORT_FORMATS: Record<ExportFormat, { label: string; filter: string; hint: string }> = {
+  ttf: { label: "TTF", filter: "TrueType Font", hint: "설치용 데스크톱 폰트" },
+  woff2: { label: "WOFF2", filter: "Web Open Font Format 2", hint: "웹폰트용 압축 형식 — @font-face에 사용" },
+};
 // unitsPerEm 입력의 합리적 양수 범위 — 벗어나면 scale_upem에 깨진 값이 흘러가지 않도록 자동(null)로 폴백.
 export const UPEM_MIN = 16;
 export const UPEM_MAX = 16384;

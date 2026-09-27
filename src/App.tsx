@@ -2,8 +2,30 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { DEFAULT_SAMPLE, FONT_SAMPLES, FontSample } from "./samples";
-import type { LoadedFont, MergedEntry, SlotId, MergeMode, Style, BasicOpts, MonoOpts } from "./types";
-import { SLOT_INFO, BASIC_DEFAULTS, MONO_DEFAULTS, DEFAULT_NAMES, STYLES, UPEM_MIN, UPEM_MAX } from "./types";
+import type {
+  LoadedFont,
+  MergedEntry,
+  SlotId,
+  MergeMode,
+  Style,
+  BasicOpts,
+  MonoOpts,
+  AxisLocation,
+  VariableInfo,
+  ExportFormat,
+  SubsetPreset,
+} from "./types";
+import {
+  SLOT_INFO,
+  BASIC_DEFAULTS,
+  MONO_DEFAULTS,
+  DEFAULT_NAMES,
+  STYLES,
+  UPEM_MIN,
+  UPEM_MAX,
+  EXPORT_FORMATS,
+  SUBSET_PRESETS,
+} from "./types";
 import { readFamilyName, readUnitsPerEm } from "./fontUtils";
 import { deriveDefaultName } from "./outputName";
 import { buildStatus } from "./status";
@@ -33,12 +55,19 @@ function App() {
   const [outName, setOutName] = useState(DEFAULT_NAMES.basic);
   const [mode, setMode] = useState<MergeMode>("basic");
   const [style, setStyle] = useState<Style>("Regular");
+  // 저장 형식은 내보낼 때만 쓰인다 — buildOptions(캐시 키·재병합 트리거)에 넣지 않는다.
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("ttf");
+  const [exporting, setExporting] = useState(false);
+  // 글자 범위(서브셋) — 병합 결과 자체를 바꾸므로 buildOptions에 들어가 캐시 키·자동 재병합을 탄다.
+  const [subset, setSubset] = useState<SubsetPreset>("none");
   // 모드별 옵션을 분리 보존 — 모드를 오가도 각자 값이 남는다.
   const [basicOpts, setBasicOpts] = useState<BasicOpts>(BASIC_DEFAULTS);
   // unitsPerEm 입력의 "날 텍스트" — basicOpts.upem(검증된 모델값)과 분리해야 타이핑이 막히지 않는다.
   // (컨트롤드 인풋을 매 키 입력마다 범위검증→null로 되돌리면 16 미만 중간값이 지워져 입력 불가)
   const [upemText, setUpemText] = useState(BASIC_DEFAULTS.upem == null ? "" : String(BASIC_DEFAULTS.upem));
   const [monoOpts, setMonoOpts] = useState<MonoOpts>(MONO_DEFAULTS);
+  // 가변 폰트 슬롯의 고정 좌표(null = 축 기본값) — 슬롯에 붙은 값이라 스왑하면 함께 뒤집힌다.
+  const [instances, setInstances] = useState<Record<SlotId, AxisLocation | null>>({ a: null, b: null });
   // 사이드바 섹션 접힘 상태 — 순수 UI(값은 App이 소유하므로 접어도 컨트롤 값·자동 재병합 불변).
   // 전부 기본 펼침: 출력을 접으면 병합/저장 버튼이 사라지므로 첫 화면은 열어둔다.
   const [open, setOpen] = useState({ slots: true, options: true, preview: true, output: true });
@@ -112,20 +141,29 @@ function App() {
       const familyName = readFamilyName(buffer) ?? file.name.replace(/\.[^.]+$/, "");
       setFonts((prevFonts) => ({ ...prevFonts, [slot]: { family, fileName: file.name, upem, familyName } }));
       setErrors((prevErrors) => ({ ...prevErrors, [slot]: null }));
+      setInstances((prev) => ({ ...prev, [slot]: null }));
       clearMerged();
       // 병합용으로 Rust에 바이트 업로드 (웹뷰는 파일 경로를 모르므로)
       await invoke("upload_font", new Uint8Array(buffer), { headers: { slot } });
       // 고정폭·OTF 변환 판정 — mono 엔진 check_monospace와 같은 코드(사이드카 inspect)라
       // 배지와 병합 검증이 어긋나지 않는다. 전송 실패·미응답은 무시(배지 없음).
-      // ok:false(가변 OTF(CFF2) 등)는 슬롯 에러로 표면화 — FontFace는 CFF2도 잘 렌더링해
-      // 브라우저가 못 걸러주므로, 첫 병합이 아니라 업로드 시점에 알려야 한다.
+      // ok:false(가변 축 없는 CFF2·인스턴스 생성 실패 등)는 슬롯 에러로 표면화 — FontFace는
+      // 이런 폰트도 잘 렌더링해 브라우저가 못 걸러주므로, 첫 병합이 아니라 업로드 시점에 알려야 한다.
       // 슬롯은 face 역탐색으로 정한다: 응답 대기 중 스왑되면 face가 반대 슬롯으로
       // 이동하므로, 업로드 시점 슬롯이 아니라 지금 face가 있는 슬롯에 적용해야
       // 판정이 유실되지 않는다(OTF 변환 inspect는 수 초 — 그 사이 스왑 가능).
       // face가 어느 슬롯에도 없으면(새 파일로 교체) 폐기. 한계: 스왑이 Rust의
       // 경로 확정보다 먼저 끝나는 ms급 창에서는 반대 폰트의 판정이 붙을 수 있으나
       // 배지/에러 표시 한정이고 재업로드로 복구된다.
-      void invoke<{ ok?: boolean; error?: string; monospace?: boolean; converted_from_otf?: boolean }>(
+      // 가변 폰트는 여기서 기본값 인스턴스까지 선지불되고(대형 한글 가변 폰트는 수 초),
+      // 축·이름 붙은 인스턴스가 오면 슬롯에 굵기 드롭다운이 나타난다.
+      void invoke<{
+        ok?: boolean;
+        error?: string;
+        monospace?: boolean;
+        converted_from_otf?: boolean;
+        variable?: VariableInfo | null;
+      }>(
         "inspect_font",
         { slot },
       )
@@ -152,6 +190,7 @@ function App() {
                     ...prev[slotNow],
                     monospace: r.monospace,
                     convertedFromOtf: r.converted_from_otf === true,
+                    variable: r.variable ?? undefined,
                   },
                 }
               : prev,
@@ -176,12 +215,28 @@ function App() {
   // JSON.stringify가 결정적이다(캐시 키의 결정성 근거). 예약 키(cmd/font_a/...)는 Rust가 얹는다.
   function buildOptions(): Record<string, unknown> {
     const name = outName.trim() || DEFAULT_NAMES[mode];
+    // 가변 좌표는 FontSlot이 normalizeLocation으로 정규화해 넣은 값(기본값 = null)이라 키가 결정적이다.
+    const instance_a = instances.a;
+    const instance_b = instances.b;
     if (mode === "basic")
-      return { mode, name, style, base: basicOpts.base, cjk_source: basicOpts.cjk, upem: basicOpts.upem };
+      return {
+        mode,
+        name,
+        style,
+        instance_a,
+        instance_b,
+        subset,
+        base: basicOpts.base,
+        cjk_source: basicOpts.cjk,
+        upem: basicOpts.upem,
+      };
     return {
       mode,
       name,
       style,
+      instance_a,
+      instance_b,
+      subset,
       korean_scale: monoOpts.koreanScale,
       width_mult: monoOpts.widthMult,
       ty: monoOpts.ty,
@@ -353,25 +408,30 @@ function App() {
     }
     setFonts((p) => ({ a: p.b, b: p.a }));
     setErrors((p) => ({ a: p.b, b: p.a }));
+    setInstances((p) => ({ a: p.b, b: p.a }));
     facesRef.current = { a: facesRef.current.b, b: facesRef.current.a };
     slotSeqRef.current = { a: slotSeqRef.current.b, b: slotSeqRef.current.a };
     mergingRef.current = false; // 재병합은 스케줄러를 거치게 하기 위해 여기서 반드시 먼저 해제
     if (wasMerged) await requestAutoMerge();
   }
 
-  // 4d. 병합 결과 TTF로 저장
+  // 4d. 병합 결과 저장 — TTF는 그대로, WOFF2는 사이드카가 압축(대형 한글 폰트는 수 초)
   async function exportMerged() {
+    const format = exportFormat;
     try {
       const base = (merged?.fileName ?? outName).trim() || DEFAULT_NAMES[mode];
       const path = await save({
-        defaultPath: `${base}.ttf`,
-        filters: [{ name: "TrueType Font", extensions: ["ttf"] }],
+        defaultPath: `${base}.${format}`,
+        filters: [{ name: EXPORT_FORMATS[format].filter, extensions: [format] }],
       });
       if (!path) return;
-      await invoke("export_merged", { path });
+      setExporting(true);
+      await invoke("export_merged", { path, format });
       flashNotice(`저장됨: ${path}`);
     } catch (e) {
       setMergeError(String(e));
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -380,8 +440,9 @@ function App() {
     .filter((f): f is LoadedFont => f !== null)
     .map((f) => `"${f.family}"`)
     .join(", ");
-  // 병합 결과가 있으면 그것만 사용 — 진짜 병합 폰트의 미리보기.
-  const previewFamily = merged ? `"${merged.family}"` : familyStack || undefined;
+  // 병합 결과가 있으면 그것만 사용 — 진짜 병합 폰트의 미리보기. 결과물에 없는 글자는 시스템
+  // 폰트로 조용히 대체되지 않고 Adobe NotDef의 □로 보이게 한다(서브셋으로 뺀 글자 확인용).
+  const previewFamily = merged ? `"${merged.family}", "moeum-notdef"` : familyStack || undefined;
 
   const canMerge = fonts.a !== null && fonts.b !== null && !merging;
   // 자동 재병합이 꺼진 상태에서 옵션이 바뀌어 현재 미리보기가 옛 병합 결과인 경우 →
@@ -446,14 +507,18 @@ function App() {
             info={SLOT_INFO[mode].a}
             font={fonts.a}
             error={errors.a}
+            instance={instances.a}
             onFile={(file) => loadFontFile("a", file)}
+            onInstanceChange={(loc) => setInstances((p) => ({ ...p, a: loc }))}
           />
           <FontSlot
             slot="b"
             info={SLOT_INFO[mode].b}
             font={fonts.b}
             error={errors.b}
+            instance={instances.b}
             onFile={(file) => loadFontFile("b", file)}
+            onInstanceChange={(loc) => setInstances((p) => ({ ...p, b: loc }))}
           />
         </SidebarSection>
 
@@ -701,6 +766,22 @@ function App() {
             </select>
             <span className="control-hint">이름·OS/2 라벨 전용 · 미리보기엔 영향 없음</span>
           </div>
+          <label className="control" title={SUBSET_PRESETS[subset].hint}>
+            <span>글자 범위</span>
+            <select
+              className="select-input"
+              value={subset}
+              onChange={(e) => setSubset(e.currentTarget.value as SubsetPreset)}
+            >
+              {(Object.keys(SUBSET_PRESETS) as SubsetPreset[]).map((p) => (
+                <option key={p} value={p} title={SUBSET_PRESETS[p].hint}>
+                  {SUBSET_PRESETS[p].label}
+                  {p === "ksx1001" ? " (한글 2,350자)" : ""}
+                </option>
+              ))}
+            </select>
+            <span className="control-hint">한글·한자만 줄임 · 뺀 글자는 □로 표시</span>
+          </label>
           <label
             className="check-row"
             title="옵션(스케일·오프셋 등)을 바꾸면 0.5초 뒤 자동으로 다시 병합해 미리보기에 반영. 끄면 병합 버튼으로 수동 적용."
@@ -723,12 +804,26 @@ function App() {
             {merging && <span className="spinner" />}
             {merging ? "병합 중…" : stale ? "다시 병합" : "병합"}
           </button>
+          <div className="segmented">
+            {(Object.keys(EXPORT_FORMATS) as ExportFormat[]).map((f) => (
+              <button
+                key={f}
+                type="button"
+                className={exportFormat === f ? "seg-active" : ""}
+                onClick={() => setExportFormat(f)}
+                title={EXPORT_FORMATS[f].hint}
+              >
+                {EXPORT_FORMATS[f].label}
+              </button>
+            ))}
+          </div>
           <button
             className="export-button"
-            disabled={!merged || merging}
+            disabled={!merged || merging || exporting}
             onClick={exportMerged}
           >
-            TTF로 저장…
+            {exporting && <span className="spinner" />}
+            {exporting ? "저장 중…" : `${EXPORT_FORMATS[exportFormat].label}로 저장…`}
           </button>
         </SidebarSection>
       </aside>

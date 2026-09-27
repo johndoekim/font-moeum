@@ -3,6 +3,7 @@ name = "font-moeum-engine"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
+    "brotli>=1.1",
     "fonttools>=4.63.0",
 ]
 

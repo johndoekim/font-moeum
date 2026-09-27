@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildStatus, num, type StatusInput } from "./status";
+import { buildStatus, formatBytes, num, type StatusInput } from "./status";
 
 const base: StatusInput = {
   mergeError: null,
@@ -115,5 +115,42 @@ describe("buildStatus", () => {
     expect(r.text).toContain("한자 500");
     expect(r.text).toContain("자동 축소 12");
     expect(r.text).toContain("자모 규칙 40개");
+  });
+
+  it("appends the subset preset and size change after a trimmed merge", () => {
+    const merged = { family: "merged-1", fileName: "Jetendard", upem: null };
+    const subset = {
+      preset: "ksx1001",
+      glyphs_before: 13105,
+      glyphs_after: 4269,
+      bytes_before: 2_809_956,
+      bytes_after: 692_520,
+    };
+    const mono = buildStatus({ ...base, merged, mergedMode: "mono", stats: { copied: 11474, subset } });
+    expect(mono.text).toContain("KS X 1001 · 2.7MB → 676KB (−75%)");
+    const basic = buildStatus({
+      ...base,
+      merged,
+      mergedMode: "basic",
+      stats: { mode: "basic", subset: { ...subset, preset: "no_hanja" } },
+    });
+    expect(basic.text).toContain("한자 제외 · 2.7MB → 676KB");
+  });
+
+  it("says nothing about subsets when none was applied", () => {
+    const r = buildStatus({
+      ...base,
+      merged: { family: "merged-1", fileName: "X", upem: null },
+      mergedMode: "basic",
+      stats: { mode: "basic" },
+    });
+    expect(r.text).not.toContain("→");
+  });
+});
+
+describe("formatBytes", () => {
+  it("uses KB below 1MB and one-decimal MB above", () => {
+    expect(formatBytes(692_520)).toBe("676KB");
+    expect(formatBytes(2_809_956)).toBe("2.7MB");
   });
 });

@@ -180,9 +180,27 @@ fn upload_font(request: Request<'_>, state: State<'_, AppState>) -> Result<(), S
         meta.push(".meta");
         let _ = std::fs::remove_file(&cache);
         let _ = std::fs::remove_file(meta);
+        remove_instance_caches(&replaced);
         let _ = std::fs::remove_file(replaced);
     }
     Ok(())
+}
+
+/// 가변 폰트 인스턴스 캐시(`<업로드>.inst-*.ttf`, merge.py resolve_instance)를 지운다 —
+/// 굵기마다 한 개씩 쌓이므로 슬롯 교체 때 원본과 함께 청소한다(실패는 무시).
+fn remove_instance_caches(upload: &Path) {
+    let (Some(dir), Some(name)) = (upload.parent(), upload.file_name()) else {
+        return;
+    };
+    let prefix = format!("{}.inst-", name.to_string_lossy());
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_name().to_string_lossy().starts_with(&prefix) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// A·B 슬롯을 맞바꾼다 — "누가 라틴을 이기나" 스왑 (4a)
@@ -210,13 +228,53 @@ fn set_merged(request: Request<'_>, state: State<'_, AppState>) -> Result<(), St
     Ok(())
 }
 
-/// 현재 미리보기 중인 병합 결과를 지정 경로에 저장한다 (4d)
+/// 사이드카 응답이 `ok: true`가 아니면 그 에러 문구(없으면 `fallback`)를 Err로 바꾼다.
+fn sidecar_ok(resp: Value, fallback: &str) -> Result<Value, String> {
+    if resp.get("ok").and_then(Value::as_bool) == Some(true) {
+        return Ok(resp);
+    }
+    Err(resp
+        .get("error")
+        .and_then(Value::as_str)
+        .unwrap_or(fallback)
+        .to_string())
+}
+
+/// 현재 미리보기 중인 병합 결과를 지정 경로에 저장한다 (4d). `format`이 "woff2"면
+/// 사이드카가 압축해 쓴다 — 병합 결과는 항상 TTF이고 WOFF2는 저장 시점에만 만든다.
 #[tauri::command]
-fn export_merged(path: String, state: State<'_, AppState>) -> Result<(), String> {
-    let guard = state.last_merged.lock().unwrap();
-    let bytes = guard.as_ref().ok_or("저장할 병합 결과가 없습니다")?;
-    std::fs::write(&path, bytes).map_err(|e| format!("저장 실패: {e}"))?;
-    Ok(())
+async fn export_merged(app: AppHandle, path: String, format: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let bytes = state
+            .last_merged
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or("저장할 병합 결과가 없습니다")?;
+        match format.as_str() {
+            "ttf" => std::fs::write(&path, bytes).map_err(|e| format!("저장 실패: {e}")),
+            "woff2" => {
+                let seq = state.seq.fetch_add(1, Ordering::Relaxed);
+                let tmp = state.work_dir.join(format!("export_{seq}.ttf"));
+                std::fs::write(&tmp, bytes).map_err(|e| format!("임시 파일 쓰기 실패: {e}"))?;
+                let resp = sidecar_call(
+                    &state,
+                    json!({
+                        "cmd": "convert",
+                        "input": tmp.to_string_lossy(),
+                        "output": path,
+                        "flavor": "woff2",
+                    }),
+                );
+                let _ = std::fs::remove_file(&tmp);
+                sidecar_ok(resp?, "WOFF2 변환 실패").map(|_| ())
+            }
+            other => Err(format!("내부 오류: 알 수 없는 저장 형식 '{other}'")),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 업로드된 A·B를 사이드카로 병합하고 결과 TTF 바이트를 그대로(raw IPC) 반환한다.
@@ -251,14 +309,7 @@ async fn merge_fonts(app: AppHandle, options: Value) -> Result<Response, String>
         req.insert("font_b".into(), json!(font_b.to_string_lossy()));
         req.insert("output".into(), json!(out.to_string_lossy()));
 
-        let resp = sidecar_call(&state, Value::Object(req))?;
-        if resp.get("ok").and_then(Value::as_bool) != Some(true) {
-            return Err(resp
-                .get("error")
-                .and_then(Value::as_str)
-                .unwrap_or("알 수 없는 병합 오류")
-                .to_string());
-        }
+        let resp = sidecar_ok(sidecar_call(&state, Value::Object(req))?, "알 수 없는 병합 오류")?;
 
         *state.last_stats.lock().unwrap() = Some(resp.get("stats").cloned().unwrap_or(Value::Null));
 

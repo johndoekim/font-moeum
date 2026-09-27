@@ -9,7 +9,8 @@
 하나만 인자로 받으므로, venv 검증 시에는 별도 구동 방식으로 대체해 확인한다.)
 
 exe를 subprocess로 spawn(stdin/stdout 파이프)해 실제 프로토콜
-(ping → merge×2 → inspect → quit)로 구동하고, 병합 출력 폰트를
+(ping → merge → convert(woff2) → merge → inspect → 가변 inspect·merge×2 → 서브셋 merge → quit)로
+구동하고, 병합 출력 폰트를
 `TTFont(path, lazy=False)` + `ensureDecompiled(recurse=True)`로 강제
 전체 디컴파일한다. hiddenimports 누락 시 fontTools가 해당 테이블을
 DefaultTable로 조용히 열화시키는데(크래시하지 않음), 이후 cmap/name/hmtx/GSUB
@@ -234,6 +235,71 @@ def check_inspect(sc: SidecarProcess, tmp_dir: Path) -> None:
     print(f"  inspect OK — converted_from_otf={resp['converted_from_otf']}", flush=True)
 
 
+def check_variable(sc: SidecarProcess, tmp_dir: Path) -> None:
+    # scripts/test_instance.py의 가변 TTF 픽스처(gvar+HVAR+GDEF VarStore) 재사용 —
+    # varLib.instancer(컴파일된 iup 확장 포함)가 번들에서도 살아있는지, 그리고 가변 A가
+    # 두 엔진에서 정적 인스턴스로 고정돼 온전한 파일이 나오는지 확인한다.
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    from test_instance import LATIN, ADVANCE, build_font  # noqa: E402
+
+    var_path = tmp_dir / "smoke_var.ttf"
+    build_font(LATIN, ADVANCE, variable=True, family="SmokeVar").save(str(var_path))
+
+    resp = sc.send({"cmd": "inspect", "path": str(var_path)})
+    _require(resp is not None and resp.get("ok") is True, f"가변 inspect 실패: {resp}")
+    variable = resp.get("variable") or {}
+    _require([a.get("tag") for a in variable.get("axes", [])] == ["wght"],
+             f"inspect가 가변 축을 보고하지 않았습니다: {resp}")
+
+    for mode in ("basic", "mono"):
+        out_path = tmp_dir / f"var_{mode}.ttf"
+        resp = sc.send({
+            "cmd": "merge", "mode": mode,
+            "font_a": str(var_path), "font_b": str(FONT_B), "output": str(out_path),
+            "name": "MoeumSmokeVar", "style": "Regular", "instance_a": {"wght": 900},
+        })
+        _require(resp is not None and resp.get("ok") is True, f"가변 A {mode} 병합 실패: {resp}")
+        font = TTFont(str(out_path), lazy=False)
+        font.ensureDecompiled(recurse=True)
+        _require("fvar" not in font and "gvar" not in font,
+                 f"가변 A {mode} 결과에 가변 테이블이 남았습니다 — 인스턴스 고정 실패")
+    print("  variable OK — inspect 축 보고, basic·mono 인스턴스 병합", flush=True)
+
+
+def check_convert(sc: SidecarProcess, tmp_dir: Path) -> None:
+    # WOFF2 저장 — brotli(C 확장)가 번들에서 빠지면 fontTools가 ImportError를 내므로
+    # 여기서 드러난다. 병합 산출물(basic.ttf)을 그대로 압축해 왕복 디컴파일까지 본다.
+    src = tmp_dir / "basic.ttf"
+    out = tmp_dir / "basic.woff2"
+    resp = sc.send({"cmd": "convert", "input": str(src), "output": str(out), "flavor": "woff2"})
+    _require(resp is not None and resp.get("ok") is True, f"WOFF2 변환 실패: {resp}")
+    font = TTFont(str(out), lazy=False)
+    font.ensureDecompiled(recurse=True)
+    _require(font.flavor == "woff2", f"WOFF2 출력의 flavor가 {font.flavor!r}입니다")
+    _require(font.getBestCmap() == TTFont(str(src)).getBestCmap(), "WOFF2 왕복 후 cmap이 달라졌습니다")
+    print(f"  convert(woff2) OK — {src.stat().st_size:,} → {out.stat().st_size:,} bytes", flush=True)
+
+
+def check_subset(sc: SidecarProcess, tmp_dir: Path) -> None:
+    # 서브셋 프리셋 — fontTools.subset(+ GSUB 리가처 정리)이 번들에서도 도는지, 그리고
+    # KS X 1001 밖 음절('똠')이 실제로 빠지는지 본다.
+    out_path = tmp_dir / "subset.ttf"
+    resp = sc.send({
+        "cmd": "merge", "mode": "basic",
+        "font_a": str(FONT_A), "font_b": str(FONT_B), "output": str(out_path),
+        "name": "MoeumSmokeSubset", "style": "Regular", "subset": "ksx1001",
+    })
+    _require(resp is not None and resp.get("ok") is True, f"서브셋 병합 실패: {resp}")
+    stats = (resp.get("stats") or {}).get("subset") or {}
+    _require(stats.get("preset") == "ksx1001", f"stats.subset이 없습니다: {resp}")
+    font = _assert_merged_font(out_path, "MoeumSmokeSubset")
+    cmap = font.getBestCmap()
+    _require(ord("가") in cmap and ord("똠") not in cmap,
+             "ksx1001 결과에 '가'가 없거나 KS X 1001 밖의 '똠'이 남았습니다")
+    print(f"  subset(ksx1001) OK — 글리프 {stats['glyphs_before']} → {stats['glyphs_after']}",
+          flush=True)
+
+
 def check_quit(sc: SidecarProcess) -> None:
     sc.send({"cmd": "quit"})
     code = sc.close()
@@ -263,8 +329,11 @@ def main(argv: list[str]) -> int:
             sc = SidecarProcess(exe_path)
             check_ping(sc)
             check_merge_basic(sc, tmp_dir)
+            check_convert(sc, tmp_dir)
             check_merge_mono(sc, tmp_dir)
             check_inspect(sc, tmp_dir)
+            check_variable(sc, tmp_dir)
+            check_subset(sc, tmp_dir)
             check_quit(sc)
     except SmokeFailure as e:
         print(f"\n스모크 실패: {e}", file=sys.stderr)

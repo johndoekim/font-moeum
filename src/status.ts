@@ -1,9 +1,26 @@
 // 상태바 뷰-모델 셀렉터 — App.tsx 렌더 본문에 있던 큰 삼항을 순수 함수로 분리(테스트 가능).
-import type { LoadedFont, MergeMode } from "./types";
+import type { LoadedFont, MergeMode, SubsetPreset } from "./types";
+import { SUBSET_PRESETS } from "./types";
 
 /** stats(unknown)에서 숫자만 안전하게 꺼낸다 (문자열·undefined·null → 0) */
 export function num(v: unknown): number {
   return typeof v === "number" ? v : 0;
+}
+
+/** 파일 크기 표기 — 1MB 미만은 정수 KB, 이상은 소수 한 자리 MB */
+export function formatBytes(bytes: number): string {
+  return bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)}KB` : `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
+
+/** stats.subset(사이드카)이 있으면 " · KS X 1001 · 2.7MB → 676KB (−75%)", 없으면 "" */
+function subsetSummary(st: Record<string, unknown> | null): string {
+  const sub = st?.subset as Record<string, unknown> | undefined;
+  const label = SUBSET_PRESETS[sub?.preset as SubsetPreset]?.label;
+  if (!sub || !label) return "";
+  const before = num(sub.bytes_before);
+  const after = num(sub.bytes_after);
+  const saved = before ? Math.round((1 - after / before) * 100) : 0;
+  return ` · ${label} · ${formatBytes(before)} → ${formatBytes(after)} (−${saved}%)`;
 }
 
 export interface StatusInput {
@@ -38,16 +55,16 @@ export function buildStatus(s: StatusInput): { text: string; className: string; 
       : s.notice
         ? s.notice
         : s.merged
-          ? s.mergedMode === "mono"
-            ? `${s.merged.fileName} · 글리프 ${num(st?.copied).toLocaleString("ko-KR")}개 복사` +
-              (num(st?.hanja_copied) ? ` (한자 ${num(st?.hanja_copied).toLocaleString("ko-KR")})` : "") +
-              ` · 자동 축소 ${num(st?.capped)}개` +
-              (num(st?.ccmp_rules) ? ` · 자모 규칙 ${num(st?.ccmp_rules)}개` : "")
-            : `병합 미리보기 — ${s.merged.fileName} · 라틴 담당: ${s.baseFont?.fileName ?? `${s.basicOptsBase} 슬롯`}` +
-              // cjk === base면 라틴 담당 표기가 전체 우선을 이미 함의 — 중복 표기 회피
-              (s.basicOptsCjk !== s.basicOptsBase
-                ? ` · CJK 담당: ${s.cjkFont?.fileName ?? `${s.basicOptsCjk} 슬롯`}`
-                : "")
+          ? (s.mergedMode === "mono"
+              ? `${s.merged.fileName} · 글리프 ${num(st?.copied).toLocaleString("ko-KR")}개 복사` +
+                (num(st?.hanja_copied) ? ` (한자 ${num(st?.hanja_copied).toLocaleString("ko-KR")})` : "") +
+                ` · 자동 축소 ${num(st?.capped)}개` +
+                (num(st?.ccmp_rules) ? ` · 자모 규칙 ${num(st?.ccmp_rules)}개` : "")
+              : `병합 미리보기 — ${s.merged.fileName} · 라틴 담당: ${s.baseFont?.fileName ?? `${s.basicOptsBase} 슬롯`}` +
+                // cjk === base면 라틴 담당 표기가 전체 우선을 이미 함의 — 중복 표기 회피
+                (s.basicOptsCjk !== s.basicOptsBase
+                  ? ` · CJK 담당: ${s.cjkFont?.fileName ?? `${s.basicOptsCjk} 슬롯`}`
+                  : "")) + subsetSummary(st)
           : s.fontsA && s.fontsB
             ? s.mode === "mono"
               ? "A 베이스 + B 한글 조합 미리보기 중 (병합 전 근사치)"

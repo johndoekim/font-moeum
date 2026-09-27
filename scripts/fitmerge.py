@@ -1,9 +1,9 @@
 """font-moeum 코딩 폰트 병합 엔진 (fitmerge).
 
 고정폭 영문 폰트(A)를 베이스로 열고, 한글 폰트(B)의 CJK 글리프를 펜 파이프라인으로
-스케일·중앙정렬해 A에 복사한다 (kuskhan/jetendard 방식). 입력은 TTF/정적 OTF —
-load_ttf가 OTF를 로드 시 TTF로 변환한다. fontTools Merger를 쓰는
-merge.py와 달리 A의 테이블(GSUB 리가처·힌팅·세로 메트릭)을 그대로 보존하고,
+스케일·중앙정렬해 A에 복사한다 (kuskhan/jetendard 방식). 입력은 TTF/OTF —
+load_ttf가 OTF를 로드 시 TTF로 변환하고, 가변 폰트는 resolve_instance가 먼저
+고정한다. fontTools Merger를 쓰는 merge.py와 달리 A의 테이블(GSUB 리가처·힌팅·세로 메트릭)을 그대로 보존하고,
 한글은 라틴 폭의 정수배 셀에 맞춰 들어간다 — 터미널/에디터용 코딩 폰트 특화.
 
 - A는 고정폭(모노스페이스) 필수 — check_monospace()로 검증
@@ -33,7 +33,8 @@ from fontTools.pens.transformPen import TransformPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib.tables import otTables as ot
 
-from merge import CJK_RANGES, MergeError, apply_style_bits, load_ttf, rewrite_names
+from merge import (CJK_RANGES, MergeError, apply_style_bits, load_ttf, parse_location,
+                   resolve_instance, rewrite_names)
 
 # 사이드카 I/O는 콘솔 코드페이지(Windows cp949 등)와 무관하게 UTF-8 고정.
 # stdout은 사이드카 프로토콜 전용이므로 라이브러리 함수는 stderr에만 쓴다.
@@ -297,16 +298,18 @@ def _analyze_source(glyphset, src) -> tuple:
 def fit_merge_to_file(font_a, font_b, output, *, name="MoeumMono", style="Regular",
                       korean_scale=1.15, width_mult=2.0, ty=0.0,
                       include_hanja=True, fullwidth_source="B",
-                      jamo_ccmp=True) -> dict:
+                      jamo_ccmp=True, instance_a=None, instance_b=None) -> dict:
     """A(고정폭 라틴)에 B의 CJK 글리프를 셀에 맞춰 복사해 output에 저장한다.
 
     반환: {"path", "copied", "capped", "glyphs_added", "latin_advance",
            "korean_advance", "upem", "hanja_copied", "ccmp_rules", "warnings"}
     실패 시 MergeError. jamo_ccmp=True면 조합형 자모 L+V(+T)를 완성형 음절로
     합성하는 GSUB ccmp 리가처를 추가한다 (실패해도 병합은 성공, ccmp_rules=0).
+    instance_a/b는 가변 폰트의 축 좌표 — resolve_instance가 좌표별 인스턴스 파일로
+    고정하므로 아래 B-분석 캐시 키(경로)가 굵기마다 달라진다.
     """
-    font_a = load_ttf(Path(font_a))
-    font_b_path = Path(font_b)
+    font_a = load_ttf(resolve_instance(font_a, instance_a))
+    font_b_path = resolve_instance(font_b, instance_b)
     font_b = load_ttf(font_b_path)
     warnings: list[str] = []
 
@@ -507,7 +510,7 @@ def fit_merge_to_file(font_a, font_b, output, *, name="MoeumMono", style="Regula
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="fitmerge.py",
-        description="고정폭 영문 폰트(A)에 한글 폰트(B)의 CJK 글리프를 셀에 맞춰 복사한다 (코딩 폰트 모드). 입력 TTF/정적 OTF, 출력 TTF.",
+        description="고정폭 영문 폰트(A)에 한글 폰트(B)의 CJK 글리프를 셀에 맞춰 복사한다 (코딩 폰트 모드). 입력 TTF/OTF(가변 포함), 출력 TTF.",
     )
     parser.add_argument("font_a", type=Path, help="폰트 A — 고정폭 영문 베이스. 라틴·기호·리가처 담당")
     parser.add_argument("font_b", type=Path, help="폰트 B — 한글/CJK 글리프 공급")
@@ -529,6 +532,10 @@ def main(argv=None) -> int:
                         help="조합형 자모 합성(GSUB ccmp) 생성 생략")
     parser.add_argument("--fullwidth", choices=["A", "B"], default="B",
                         help="전각 구두점(U+3000–303F·FF00–FFEF)을 가질 폰트 (기본: %(default)s)")
+    parser.add_argument("--instance-a", type=parse_location, default=None, metavar="TAG=VAL,...",
+                        help="A가 가변 폰트일 때 고정할 축 좌표, 예: wght=700 (기본: 축 기본값)")
+    parser.add_argument("--instance-b", type=parse_location, default=None, metavar="TAG=VAL,...",
+                        help="B가 가변 폰트일 때 고정할 축 좌표 (기본: 축 기본값)")
     args = parser.parse_args(argv)
 
     t0 = time.perf_counter()
@@ -539,7 +546,8 @@ def main(argv=None) -> int:
             name=args.name, style=args.style,
             korean_scale=args.korean_scale, width_mult=args.width_mult, ty=args.ty,
             include_hanja=not args.no_hanja, fullwidth_source=args.fullwidth,
-            jamo_ccmp=not args.no_ccmp)
+            jamo_ccmp=not args.no_ccmp, instance_a=args.instance_a,
+            instance_b=args.instance_b)
     except MergeError as e:
         print(f"오류: {e}", file=sys.stderr)
         return e.code

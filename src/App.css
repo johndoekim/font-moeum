@@ -1,5 +1,13 @@
 /* Dracula 테마 (draculatheme.com) + VS Code 레이아웃 —
    사이드바 · 탭바 · 줄번호 거터 · 현재 줄 하이라이트 · 상태바 */
+
+/* 병합 미리보기의 마지막 폴백 — 결과물에 없는 글자를 □로 그린다(Adobe NotDef, OFL 1.1,
+   public/fonts/LICENSE-AdobeNotDef.md). 모든 유니코드를 .notdef 상자에 매핑하는 21KB 폰트. */
+@font-face {
+  font-family: "moeum-notdef";
+  src: url("/fonts/AND-Regular.otf") format("opentype");
+}
+
 :root {
   color-scheme: dark;
   /* 팔레트 (원시 토큰) — Dracula */
@@ -242,6 +250,28 @@ body {
   cursor: help;
 }
 
+/* 가변 폰트 인스턴스 선택 행 — 슬롯 행 아래, 배지 폭만큼 들여 파일명과 정렬 */
+.slot-var {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 0 29px;
+  cursor: default;
+}
+
+.slot-var-label {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--comment);
+}
+
+.slot-var-select {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
 .slot-loaded .slot-file {
   margin-bottom: 0;
   font-family: var(--mono);
@@ -330,6 +360,10 @@ body {
 }
 
 .export-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px; /* 저장 중 스피너 — merge-button과 같은 배치 */
   padding: 8px 18px;
   border: 1px solid var(--purple);
   border-radius: 6px;

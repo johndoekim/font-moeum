@@ -37,7 +37,7 @@ import { StatusBar } from "./StatusBar";
 import "./App.css";
 
 // 헤더 버전 배지 — package.json/tauri.conf의 실제 버전과 맞춘 상수(외부 JSON import 회피).
-const APP_VERSION = "0.1.0";
+const APP_VERSION = "0.2.0";
 
 function App() {
   const [fonts, setFonts] = useState<Record<SlotId, LoadedFont | null>>({

@@ -116,6 +116,7 @@
 - [x] **8c.** WOFF2 저장 — brotli 의존성, 사이드카 `convert`, Rust `export_merged(path, format)`, 출력 섹션 TTF/WOFF2 세그먼트(캐시 키 무관)
 - [x] **8d.** 글자 범위 프리셋(`subset_presets.py`) — 전체/한자 제외/KS X 1001, ccmp 클로저 함정 대응, 사이드카 `subset` + stats, 상태줄 용량 표시, 미리보기 Adobe NotDef □ 폴백
 - [x] **8e.** 검증 — pytest 33 · vitest 44 · 번들 사이드카 스모크(convert/variable/subset 추가) · 실폰트 E2E(Jetendard 700 KS X 1001 → WOFF2 251KB) · headless Chrome UI 조작(invoke 목 → 실제 사이드카)
+- [x] **8g.** (기존 버그) 일반 모드 라틴 담당이 셰이핑에서 뒤집힘 — Merger 합성 locl이 B의 latn 스크립트에서 A 글리프를 B 글리프로 치환(Pretendard 등 GSUB 있는 B면 항상). `_strip_overlaps`로 겹치는 모든 코드포인트를 병합 전 담당 쪽 cmap에만 남겨 해결, `test_merge_overlap.py` 회귀 테스트(양방향)
 - [ ] **8f.** Windows 번들 스모크 — brotli·iup(C 확장)이 Windows PyInstaller 번들에도 들어가는지 CI(release.yml) 스모크로 확인
 
 **완료 기준:** 가변 폰트(JetBrainsMono[wght] + PretendardVariable)를 두 모드에서 굵기를 골라 병합하고, 글자 범위를 줄여 WOFF2로 저장할 수 있다.

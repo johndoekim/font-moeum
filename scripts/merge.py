@@ -318,27 +318,37 @@ def apply_style_bits(font: TTFont, style: str) -> None:
         head.macStyle = ms
 
 
-def _strip_overlapping_cjk(loser: TTFont, winner: TTFont) -> int:
-    """양쪽이 모두 커버하는 CJK 코드포인트를 loser의 유니코드 cmap에서 삭제한다.
+def _strip_overlaps(fonts: dict, base: str, cjk_source: str) -> dict[str, int]:
+    """두 폰트가 모두 가진 코드포인트를 담당이 아닌 쪽의 유니코드 cmap에서 지운다.
+
+    Merger의 first-wins는 cmap 수준일 뿐이다. 두 폰트가 같은 코드포인트를 서로 다른
+    글리프로 가지면 Merger는 뒤 폰트의 스크립트(latn 등, DFLT 제외)에 합성 locl(앞 글리프
+    → 뒤 글리프)을 만들고, 브라우저·CoreText가 셰이핑할 때 그 locl이 뒤 폰트 글리프로
+    바꾼다(실측: JetBrains Mono + Pretendard에서 라틴 담당이 뒤집힘 — B가 latn 스크립트
+    GSUB를 가진 한글 폰트면 항상). 병합 전에 겹침을 없애 Merger가 중복을 보지 못하게 한다.
+    담당: CJK_RANGES는 cjk_source, 나머지는 base.
 
     Merger는 폰트별로 format 12(있으면) 아니면 format 4만 소비하므로 두 포맷
     모두에서 지운다. format 14(UVS)는 불변 — default 엔트리는 병합 후 메가
-    cmap 기준으로 해석돼 자동으로 이긴 쪽을 따라간다. loser 단독 코드포인트는
-    유지(커버리지 손실 방지). 글리프 자체는 남는다(v1 트레이드오프).
+    cmap 기준으로 해석돼 자동으로 이긴 쪽을 따라간다. 한쪽에만 있는 코드포인트는
+    유지(커버리지 손실 방지). 진 쪽 글리프 자체는 남는다(v1 트레이드오프).
+    반환: 폰트 키별 삭제 개수.
     """
-    loser_cmap = loser.getBestCmap() or {}
-    winner_cmap = winner.getBestCmap() or {}
-    targets = {cp for cp in loser_cmap if cp in winner_cmap
-               and any(lo <= cp <= hi for lo, hi, _cat in CJK_RANGES)}
-    for subtable in loser["cmap"].tables:  # fitmerge의 서브테이블 순회 관례와 동일
-        if subtable.format == 14:
-            continue
-        if not (subtable.platformID == 0
-                or (subtable.platformID == 3 and subtable.platEncID in (1, 10))):
-            continue
-        for cp in targets:
-            subtable.cmap.pop(cp, None)
-    return len(targets)
+    cmaps = {key: font.getBestCmap() or {} for key, font in fonts.items()}
+    targets = {"A": set(), "B": set()}
+    for cp in cmaps["A"].keys() & cmaps["B"].keys():
+        owner = cjk_source if any(lo <= cp <= hi for lo, hi, _cat in CJK_RANGES) else base
+        targets["B" if owner == "A" else "A"].add(cp)
+    for key, cps in targets.items():
+        for subtable in fonts[key]["cmap"].tables:  # fitmerge의 서브테이블 순회 관례와 동일
+            if subtable.format == 14:
+                continue
+            if not (subtable.platformID == 0
+                    or (subtable.platformID == 3 and subtable.platEncID in (1, 10))):
+                continue
+            for cp in cps:
+                subtable.cmap.pop(cp, None)
+    return {key: len(cps) for key, cps in targets.items()}
 
 
 def merge_to_file(font_a, font_b, output, *, name: str = "MoeumMerged",
@@ -382,14 +392,14 @@ def merge_to_file(font_a, font_b, output, *, name: str = "MoeumMerged",
     # base 폰트를 리스트 첫 번째로 — 겹치는 cmap에서 첫 번째가 이긴다
     order = ["A", "B"] if base == "A" else ["B", "A"]
 
-    # 겹치는 CJK만 cjk_source가 이기게: 지는 쪽(= base, 모든 걸 이기는 쪽)의 cmap에서
-    # 교집합 CJK를 미리 삭제해 Merger의 first-wins를 우회한다.
-    if cjk_source and cjk_source != base:
-        if cjk_source not in ("A", "B"):
-            raise MergeError(f"cjk_source는 A 또는 B여야 합니다: {cjk_source}")
-        removed = _strip_overlapping_cjk(loser=fonts[base], winner=fonts[cjk_source])
-        print(f"CJK 담당({cjk_source}): 겹치는 CJK {removed}자 — {base} cmap에서 제거",
-              file=sys.stderr)
+    # 겹치는 코드포인트는 담당 폰트의 cmap에만 남긴다 — 라틴 등은 base, CJK는 cjk_source.
+    # Merger의 first-wins(cmap)만 믿으면 합성 locl 때문에 셰이핑에서 뒤집힌다(_strip_overlaps).
+    cjk_owner = cjk_source or base
+    if cjk_owner not in ("A", "B"):
+        raise MergeError(f"cjk_source는 A 또는 B여야 합니다: {cjk_source}")
+    removed = _strip_overlaps(fonts, base=base, cjk_source=cjk_owner)
+    print(f"겹치는 코드포인트 정리 — A cmap {removed['A']}개 · B cmap {removed['B']}개 제거 "
+          f"(라틴 담당 {base}, CJK 담당 {cjk_owner})", file=sys.stderr)
 
     with tempfile.TemporaryDirectory() as tmp:
         merge_files = []

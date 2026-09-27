@@ -3,11 +3,11 @@
 > Phase 2~3(병합 엔진·미리보기·사이드카) 구현 시 참고. 작업 목록은 [TODO.md](TODO.md), 프로젝트 정의는 [CLAUDE.md](../CLAUDE.md) 참고.
 
 **fonttools Merger 제약 (반드시 지킬 것)**
-- 모든 폰트가 TrueType 아웃라인(`glyf`)이어야 함. CFF 병합 미지원 → 정적 OTF는 로드 단계에서 TTF로 변환 후 병합(아래 "OTF(CFF) 입력" 절), CFF2는 거부
+- 모든 폰트가 TrueType 아웃라인(`glyf`)이어야 함. CFF 병합 미지원 → 정적 OTF는 로드 단계에서 TTF로 변환 후 병합(아래 "OTF(CFF) 입력" 절). 가변 폰트는 병합 전 정적 인스턴스로 고정(아래 "가변 폰트 입력" 절), 가변 축 없는 CFF2만 거부
 - 모든 폰트의 `unitsPerEm`이 동일해야 함 → `scale_upem`으로 사전 통일
 - 중복 글리프 구분이 일어나면 `GSUB` 테이블 필요 — 겹치는 코드포인트가 서로 다른 글리프면 Merger가 synthetic 'locl' SingleSubst를 합성한다
 - cmap 소비는 폰트별 format 12(있으면) 아니면 format 4만 — 겹침 처리는 리스트 첫 번째 폰트 승리(first-wins)
-- `cjk_source` 옵션(basic 모드)은 병합 전 지는 쪽(base) cmap의 모든 유니코드 서브테이블(format 14 제외)에서 **양쪽이 모두 커버하는** CJK 코드포인트를 삭제해 first-wins를 우회한다. 지는 쪽의 죽은 글리프는 파일에 남고(v1 트레이드오프), OS/2 유니코드 범위는 Merger가 bitwise-or라 무보정으로 정합
+- **first-wins는 cmap 수준일 뿐 — 셰이핑에서 뒤집힌다.** 두 폰트가 같은 코드포인트를 다른 글리프로 가지면 Merger는 뒤 폰트의 스크립트(latn 등, DFLT 제외)에 합성 `locl`(앞 글리프 → 뒤 글리프)을 만든다. 브라우저·CoreText가 라틴을 셰이핑하면 이 locl이 뒤 폰트 글리프로 바꿔 "라틴 담당"이 무력화된다(실측: JetBrains Mono + Pretendard, Chrome·WKWebView 모두 라틴이 Pretendard로 렌더링. GSUB 없는 D2Coding 샘플로는 합성이 안 일어나 잡히지 않았음). 그래서 merge.py `_strip_overlaps`가 병합 전 **겹치는 모든 코드포인트**를 담당이 아닌 쪽 cmap의 유니코드 서브테이블(format 14 제외)에서 지운다 — 담당은 CJK_RANGES면 `cjk_source`, 나머지는 `base`. Merger가 중복을 못 보므로 locl도 없다(test_merge_overlap.py). 지는 쪽의 죽은 글리프는 파일에 남고(v1 트레이드오프), OS/2 유니코드 범위는 Merger가 bitwise-or라 무보정으로 정합
 - Merger 산출물은 `post` format 3(글리프 이름 소실) — 재로드 시 fontTools가 cmap에서 이름을 합성(`uniAC00` 등)하므로 **글리프 이름으로 출처 판별 불가**. 검증은 hmtx advance 등 실측값으로 할 것
 - **한쪽에만 있는 `vhea`/`vmtx`(세로 메트릭)는 Merger가 속성 병합에서 죽는다** — `mergeObjects`가 테이블 부재(NotImplemented)를 속성값으로 흘려 raw `max`/`min`/`equal`과 비교(`'>' not supported between 'int' and 'NotImplementedType'` 류 — 어느 속성이 먼저 터지는지는 set 순회 순서라 에러 문구가 실행마다 다름). 맑은 고딕 등 세로 메트릭 있는 한글 폰트가 걸림 → merge.py가 병합 전 가진 쪽에서 제거(가로쓰기 산출물이라 무해)
 - **`JSTF`(양쪽 정렬 데이터)는 Merger 범용 병합이 내부 리스트 속성에서 죽는다**(`type object 'list' has no attribute 'mergeMap'`). Arial·Times 등 MS 폰트가 보유 → merge.py가 병합 전 항상 제거(현대 셰이퍼 미소비, 렌더링 영향 없음)
@@ -18,8 +18,24 @@
 - **레시피** (fonttools Snippets/otf2ttf.py, MIT): `Cu2QuPen(TTGlyphPen, max_err, reverse_direction=True)` — max_err = 1.0×upem/1000(em의 0.1%, 시각적 구분 불가), 방향 반전은 PostScript(반시계)→TrueType(시계). glyf/loca 신설 → `CFF `/`VORG`/`DSIG` 삭제 → hmtx lsb=xMin 보정 → maxp 0.5→1.0(maxZones=1 — 0은 스펙 위반) → post 2.0(글리프 이름 보존, 캐시 디버깅용 — 비표준 이름 65,279개 초과 CID 폰트는 uint16 한계로 3.0 폴백) → sfntVersion 교체. **CFF 힌팅은 소실**(UI 배지 툴팁에 명시). T2 seac(악센트 합성)는 컴포지트 글리프로 보존된다(참조 글리프도 함께 변환되므로 유효)
 - **디스크 캐시:** `<원본>.ttfcache` + `.ttfcache.meta`(같은 디렉터리). 유효 = meta에 기록된 원본 신원 **(size, mtime_ns)** 이 현재 원본과 일치 + 캐시가 glyf 포함으로 열림. 신원 검사는 필수 — 앱의 `upload_{n}` 파일명 seq가 세션마다 리셋되는데 work_dir(%TEMP%\font-moeum)은 지속되어 같은 경로가 다른 내용으로 재사용되고, mtime 단독 비교는 과거 mtime을 보존하는 교체(zip 해제·cp -p)에 뚫린다(fitmerge B-분석 캐시와 같은 기준). 쓰기는 tmp 후 `os.replace`(원자적, 실패 시 tmp 정리 후 무캐시 진행). 업로드 직후 프론트가 inspect를 호출하므로 변환(대형 한글 OTF 수 초)은 **업로드 시 1회 선지불** — 재조정 루프는 TTF와 동일 속도
 - **배지 판정 = 실제 변환 기준:** `needs_conversion()`은 sfnt 태그가 아니라 load_ttf와 같은 테이블 기준(glyf 부재 ∧ CFF 존재) — glyf+CFF 공존(변환 안 함)·TrueType 태그를 단 CFF 폰트(변환함)에서도 배지가 거짓말하지 않는다
-- CFF2(가변 OTF)는 거부(축 소실이 사용자 기대와 어긋남), glyf+CFF 공존 비정상 폰트는 glyf 우선. 대형 Pan-CJK OTF(SourceHanSans 풀버전 ≈ 65k 글리프)는 병합 후 65,535 한계(위 Merger 제약 마지막 항목)에 걸릴 수 있음
+- 가변 OTF(CFF2+fvar)는 resolve_instance가 정적 CFF로 내린 뒤 이 변환을 거친다(아래 "가변 폰트 입력" 절). 가변 축 없는 CFF2는 거부, glyf+CFF 공존 비정상 폰트는 glyf 우선. 대형 Pan-CJK OTF(SourceHanSans 풀버전 ≈ 65k 글리프)는 병합 후 65,535 한계(위 Merger 제약 마지막 항목)에 걸릴 수 있음
 - cu2qu는 fonttools 내장(MIT) — 라이선스 추가 부담 없음. FontForge(GPL) 경로는 여전히 금지
+
+**가변 폰트 입력 — 정적 인스턴스 고정 (`resolve_instance`, merge.py, Phase 8)**
+- **가변 폰트를 그대로 엔진에 넣으면 깨진다(실측, JetBrainsMono[wght] + PretendardVariable):** basic은 Merger가 GDEF의 VarStore(가변 커닝·앵커)에서 `type object 'VarStore' has no attribute 'mergeMap'`으로 죽고, mono는 A의 gvar가 옛 글리프 수(1,754) 그대로 남아 글리프 13,105개짜리 파일을 fontTools조차 다시 못 여는데 병합은 "성공"으로 끝난다. 그래서 fvar가 있으면 **location이 없어도 항상** 고정한다(빠진 축 = 기본값, 범위 밖 = 클램프). `load_ttf`는 고정 안 된 가변 폰트를 거부해 이 불변식을 강제한다
+- **인스턴스는 메모리가 아니라 파일로:** fitmerge B-분석 캐시 키가 `(B 경로, mtime_ns, size)`라, 메모리에서 인스턴스를 만들면 굵기를 바꿔도 옛 윤곽이 재사용된다. 캐시 파일 `<원본>.inst-<원본 신원 해시>-<좌표 해시>.ttf`(원본 옆, tmp→`os.replace`)의 경로가 좌표마다 달라 캐시가 섞이지 않는다. 새로 쓸 때 신원이 다른 형제(같은 upload_N 경로에 온 옛 내용)는 지우고, Rust는 슬롯 교체 시 `.inst-*`를 함께 청소
+- `instantiateVariableFont(..., static=True, downgradeCFF2=True)` — `downgradeCFF2`는 CFF2가 있을 때만 켠다(가변 TTF에 켜면 ValueError). CFF2는 정적 CFF가 되고 곧바로 `otf_to_ttf`로 TTF까지 만들어 캐시한다
+- 비용: PretendardVariable(14,757 글리프) 인스턴스 ≈ 3.9초, JetBrainsMono ≈ 0.2초. 업로드 직후 inspect가 기본값 인스턴스를 선지불하고, 굵기 변경은 좌표별 캐시라 되돌아오면 즉시
+- UI는 fvar의 이름 붙은 인스턴스(Thin…Black) 드롭다운 — 연속 슬라이더를 두지 않아 인스턴스 파일 수를 억제한다. 축 기본값 선택은 `null`로 정규화해 캐시 키가 하나로 모인다(src/variable.ts)
+
+**한글 서브셋 프리셋 (`scripts/subset_presets.py`, Phase 8)**
+- "빼기" 서브셋: 한자(4E00–9FFF·3400–4DBF·F900–FAFF)와 (ksx1001이면) 2,350자 밖 음절·조합형 자모만 빼고 나머지 코드포인트는 전부 유지. 옵션은 레이아웃 기능·name·힌팅·글리프 이름 전부 보존
+- **KS X 1001 판정 = EUC-KR 2바이트 인코딩.** CPython euc_kr은 나머지 8,822자도 부속서 3의 8바이트 조합 시퀀스로 "인코딩에 성공"하므로 성공 여부로 고르면 11,172자가 전부 남는다
+- **GSUB 클로저 함정:** mono 결과는 조합형 자모를 호환 자모(ㄱ·ㅏ — ㅋㅋ 때문에 남겨야 함)와 같은 글리프로 매핑하고 ccmp 리가처(ㄱ+ㅏ→가)를 가져서, 그대로 서브셋하면 클로저가 버린 음절을 전부 되살린다(17,755→13,121에 그침). 서브셋 전에 출력이 제거 대상 글리프인 리가처를 지운다(`_prune_ligatures_to`) — Jetendard 700 기준 2.81MB → 693KB, ccmp 11,191 → 2,369
+- 미리보기 폰트 스택 끝의 Adobe NotDef(OFL, cmap format 4/12, 21KB, public/fonts/)가 결과물에 없는 글자를 □로 그린다 — 시스템 폰트로 조용히 대체되지 않게. Chromium(=WebView2)·WKWebView 모두 실측 확인
+
+**WOFF2 저장 (sidecar `convert`, Phase 8)**
+- 병합 결과·캐시·미리보기는 항상 TTF이고 WOFF2는 저장 시점에만 사이드카가 만든다(`font.flavor = "woff2"`). brotli(C 확장)가 PyInstaller 번들에서 빠지면 fontTools가 ImportError를 내므로 smoke_sidecar의 convert 검사가 잡는다
 
 **영문+한글 특유의 사실**
 - 라틴(U+0041~)과 한글 음절(U+AC00~D7A3)은 유니코드 영역이 완전히 달라 **충돌이 거의 없음** → 이 조합은 병합 중 제일 깨끗한 축

@@ -35,8 +35,8 @@
    드러낸다.
 
 5. excludes=['tkinter'] — GUI 없는 CLI/사이드카 빌드에 불필요한 의존성 제외.
-   pathex=['.'] — scripts/의 flat 모듈(merge, fitmerge, otf2ttf가 패키지가
-   아니라 최상위 모듈) 임포트 해석용.
+   pathex=['.'] — scripts/의 flat 모듈(merge, fitmerge, otf2ttf, subset_presets가
+   패키지가 아니라 최상위 모듈) 임포트 해석용.
 """
 
 from PyInstaller.utils.hooks import collect_submodules

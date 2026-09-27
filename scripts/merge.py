@@ -3,9 +3,10 @@
 영문 폰트(A) + 한글 폰트(B)를 하나의 TTF로 병합한다.
 CLI로도 쓰고(merge.py 직접 실행), 사이드카(sidecar.py)가 라이브러리로도 쓴다.
 
-- 입력 TTF/정적 OTF · 출력은 항상 TTF — fontTools Merger는 CFF(OTF) 병합이
+- 입력 TTF/OTF · 출력은 항상 TTF — fontTools Merger는 CFF(OTF) 병합이
   불가하므로 정적 OTF는 로드 시점에 TTF로 변환(otf2ttf, 디스크 캐시)한다.
-  가변 OTF(CFF2)는 거부.
+- 가변 폰트(fvar)는 병합 전 항상 정적 인스턴스로 고정(resolve_instance, 디스크 캐시)
+  — 가변 OTF(CFF2)도 정적 CFF로 내린 뒤 TTF로 변환된다.
 - 병합 전 unitsPerEm 통일(scale_upem) — 안 맞추면 A글자·B글자 크기가 따로 놈
 - merge 리스트 첫 번째 폰트가 겹치는 코드포인트(라틴/숫자/문장부호)의 cmap을 가짐
 - name 테이블 재작성으로 새 패밀리 이름 부여 — 원본 이름 충돌 방지 + OFL의
@@ -16,6 +17,7 @@ CLI로도 쓰고(merge.py 직접 실행), 사이드카(sidecar.py)가 라이브�
 """
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -26,6 +28,7 @@ from pathlib import Path
 from fontTools.merge import Merger
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.scaleUpem import scale_upem
+from fontTools.varLib.instancer import instantiateVariableFont
 
 from otf2ttf import otf_to_ttf
 
@@ -64,15 +67,16 @@ def needs_conversion(path: Path) -> bool:
 
     load_ttf의 실제 분기와 같은 기준(테이블 존재)을 쓴다. sfnt 태그('OTTO')로
     판정하면 glyf+CFF 공존 폰트(변환 안 함)나 TrueType 태그를 단 CFF 폰트(변환함)
-    에서 배지가 실제 동작과 어긋난다. lazy 로드라 테이블 디렉터리만 읽는다.
-    열기 실패는 False — 에러는 뒤따르는 load_ttf가 만든다.
+    에서 배지가 실제 동작과 어긋난다. 가변 OTF(CFF2+fvar)도 resolve_instance가
+    정적 CFF로 내린 뒤 TTF로 변환하므로 대상이다. lazy 로드라 테이블 디렉터리만
+    읽는다. 열기 실패는 False — 에러는 뒤따르는 load_ttf가 만든다.
     """
     try:
         font = TTFont(str(path), lazy=True)
     except Exception:
         return False
     try:
-        return "glyf" not in font and "CFF " in font
+        return "glyf" not in font and ("CFF " in font or ("CFF2" in font and "fvar" in font))
     finally:
         font.close()
 
@@ -126,12 +130,109 @@ def _load_otf_converted(path: Path, font: TTFont) -> TTFont:
     return font
 
 
+def parse_location(text: str) -> dict[str, float]:
+    """CLI 축 좌표 "wght=700,wdth=87.5" → {"wght": 700.0, "wdth": 87.5}."""
+    location = {}
+    for part in text.split(","):
+        tag, sep, value = part.strip().partition("=")
+        if not sep or not tag.strip():
+            raise ValueError(f"축 좌표는 태그=값 형식이어야 합니다: {part.strip()!r}")
+        location[tag.strip()] = float(value)
+    return location
+
+
+def variable_info(path) -> dict | None:
+    """가변 폰트(fvar)의 축과 이름 붙은 인스턴스 — UI 굵기 선택용. 정적 폰트·열기 실패는 None."""
+    try:
+        font = TTFont(str(path), lazy=True)
+    except Exception:
+        return None
+    try:
+        if "fvar" not in font:
+            return None
+        fvar, name = font["fvar"], font["name"]
+        return {
+            "axes": [{"tag": a.axisTag, "name": name.getDebugName(a.axisNameID) or a.axisTag,
+                      "min": a.minValue, "default": a.defaultValue, "max": a.maxValue}
+                     for a in fvar.axes],
+            "instances": [{"name": name.getDebugName(i.subfamilyNameID) or "",
+                           "coordinates": dict(i.coordinates)}
+                          for i in fvar.instances],
+        }
+    finally:
+        font.close()
+
+
+def resolve_instance(path, location: dict | None = None):
+    """가변 폰트면 정적 인스턴스 TTF(디스크 캐시) 경로를, 정적이면 path를 그대로 돌려준다.
+
+    가변 폰트는 location이 없어도 항상 고정한다(빠진 축은 기본값, 범위 밖은 클램프).
+    그대로 엔진에 넘기면 Merger는 GDEF의 VarStore(가변 커닝)에서 죽고, fitmerge는 A의 gvar를 옛
+    글리프 수로 남겨 다시 열 수 없는 파일을 "성공"으로 만든다(실측). 가변 OTF(CFF2)는
+    instancer가 정적 CFF로 내린 뒤 otf_to_ttf로 TTF까지 만들어 캐시한다.
+
+    결과를 메모리가 아니라 파일로 두는 이유: fitmerge B-분석 캐시가 B의 경로+mtime+size를
+    키로 쓰므로, 인스턴스마다 경로가 달라야 굵기를 바꿨을 때 옛 윤곽이 재사용되지 않는다.
+    캐시 이름 = <원본>.inst-<원본 신원 해시>-<좌표 해시>.ttf — 신원은 .ttfcache와 같은
+    (size, mtime_ns) 기준이고, 새로 쓸 때 신원이 다른 형제 인스턴스(같은 경로에 온 옛
+    내용)는 지운다.
+    """
+    path = Path(path)
+    if not path.is_file():
+        raise MergeError(f"파일이 없습니다: {path}")
+    try:
+        font = TTFont(str(path))
+    except Exception as e:
+        raise MergeError(f"폰트를 열 수 없습니다 ({path.name}): {e}")
+    if "fvar" not in font:
+        font.close()
+        return path
+
+    requested = location or {}
+    pinned = {a.axisTag: min(max(float(requested.get(a.axisTag, a.defaultValue)), a.minValue),
+                              a.maxValue)
+              for a in font["fvar"].axes}
+    source_hash = hashlib.sha1(json.dumps(_source_identity(path)).encode()).hexdigest()[:8]
+    loc_hash = hashlib.sha1(json.dumps(sorted(pinned.items())).encode()).hexdigest()[:8]
+    prefix = f"{path.name}.inst-"
+    cache = path.with_name(f"{prefix}{source_hash}-{loc_hash}.ttf")
+    if cache.is_file():
+        font.close()
+        return cache
+
+    t0 = time.perf_counter()
+    try:
+        # downgradeCFF2는 CFF2 없는 폰트(가변 TTF)에 켜면 ValueError — CFF2일 때만
+        instantiateVariableFont(font, pinned, inplace=True, static=True,
+                                downgradeCFF2="CFF2" in font)
+    except Exception as e:
+        raise MergeError(f"{path.name}: 가변 폰트 인스턴스 생성 실패 ({pinned}): {e}")
+    if "glyf" not in font and "CFF " in font:
+        otf_to_ttf(font)
+    if "glyf" not in font:
+        raise MergeError(f"{path.name}: 가변 폰트를 TrueType 인스턴스로 만들 수 없습니다.")
+
+    for stale in path.parent.glob(f"{prefix}*"):
+        if not stale.name.startswith(f"{prefix}{source_hash}-"):
+            stale.unlink(missing_ok=True)
+    tmp = cache.with_name(cache.name + f".tmp{os.getpid()}")
+    try:
+        font.save(str(tmp))
+        os.replace(tmp, cache)  # 원자적 교체 — 존재 = 완성본
+    except Exception as e:
+        tmp.unlink(missing_ok=True)
+        raise MergeError(f"{path.name}: 가변 폰트 인스턴스 저장 실패: {e}")
+    print(f"{path.name}: 가변 → 정적 인스턴스 {pinned} {time.perf_counter() - t0:.1f}초",
+          file=sys.stderr)
+    return cache
+
+
 def load_ttf(path: Path) -> TTFont:
     """폰트를 로드해 TrueType(glyf) TTFont로 돌려준다.
 
     정적 OTF(CFF)는 TTF로 변환(디스크 캐시) 후 반환 — 두 엔진과 inspect가
     이 함수를 공유하므로 여기 한 곳의 변환으로 전체가 OTF를 받는다.
-    가변 OTF(CFF2)·기타 형식은 거부.
+    가변 폰트는 호출자가 resolve_instance로 먼저 고정해야 한다(여기선 거부).
     """
     if not path.is_file():
         raise MergeError(f"파일이 없습니다: {path}")
@@ -139,6 +240,8 @@ def load_ttf(path: Path) -> TTFont:
         font = TTFont(str(path))
     except Exception as e:
         raise MergeError(f"폰트를 열 수 없습니다 ({path.name}): {e}")
+    if "fvar" in font:
+        raise MergeError(f"{path.name}: 내부 오류 — 가변 폰트가 인스턴스 고정 없이 로드됐습니다.")
     if "glyf" in font:
         if "CFF " in font or "CFF2" in font:  # 비정상 폰트: 공존 시 glyf 우선
             for tag in ("CFF ", "CFF2", "VORG"):
@@ -146,9 +249,9 @@ def load_ttf(path: Path) -> TTFont:
                     del font[tag]
             print(f"{path.name}: glyf와 CFF가 공존 — glyf 사용, CFF 제거", file=sys.stderr)
         return font
-    if "CFF2" in font:
+    if "CFF2" in font:  # fvar 없는 CFF2 — 가변 OTF는 resolve_instance가 이미 CFF로 내렸다
         raise MergeError(
-            f"{path.name}: 가변 OTF(CFF2)는 지원하지 않습니다 — "
+            f"{path.name}: 가변 축이 없는 CFF2 폰트는 지원하지 않습니다 — "
             f"정적 OTF 또는 TTF를 사용해 주세요."
         )
     if "CFF " in font:
@@ -215,38 +318,50 @@ def apply_style_bits(font: TTFont, style: str) -> None:
         head.macStyle = ms
 
 
-def _strip_overlapping_cjk(loser: TTFont, winner: TTFont) -> int:
-    """양쪽이 모두 커버하는 CJK 코드포인트를 loser의 유니코드 cmap에서 삭제한다.
+def _strip_overlaps(fonts: dict, base: str, cjk_source: str) -> dict[str, int]:
+    """두 폰트가 모두 가진 코드포인트를 담당이 아닌 쪽의 유니코드 cmap에서 지운다.
+
+    Merger의 first-wins는 cmap 수준일 뿐이다. 두 폰트가 같은 코드포인트를 서로 다른
+    글리프로 가지면 Merger는 뒤 폰트의 스크립트(latn 등, DFLT 제외)에 합성 locl(앞 글리프
+    → 뒤 글리프)을 만들고, 브라우저·CoreText가 셰이핑할 때 그 locl이 뒤 폰트 글리프로
+    바꾼다(실측: JetBrains Mono + Pretendard에서 라틴 담당이 뒤집힘 — B가 latn 스크립트
+    GSUB를 가진 한글 폰트면 항상). 병합 전에 겹침을 없애 Merger가 중복을 보지 못하게 한다.
+    담당: CJK_RANGES는 cjk_source, 나머지는 base.
 
     Merger는 폰트별로 format 12(있으면) 아니면 format 4만 소비하므로 두 포맷
     모두에서 지운다. format 14(UVS)는 불변 — default 엔트리는 병합 후 메가
-    cmap 기준으로 해석돼 자동으로 이긴 쪽을 따라간다. loser 단독 코드포인트는
-    유지(커버리지 손실 방지). 글리프 자체는 남는다(v1 트레이드오프).
+    cmap 기준으로 해석돼 자동으로 이긴 쪽을 따라간다. 한쪽에만 있는 코드포인트는
+    유지(커버리지 손실 방지). 진 쪽 글리프 자체는 남는다(v1 트레이드오프).
+    반환: 폰트 키별 삭제 개수.
     """
-    loser_cmap = loser.getBestCmap() or {}
-    winner_cmap = winner.getBestCmap() or {}
-    targets = {cp for cp in loser_cmap if cp in winner_cmap
-               and any(lo <= cp <= hi for lo, hi, _cat in CJK_RANGES)}
-    for subtable in loser["cmap"].tables:  # fitmerge의 서브테이블 순회 관례와 동일
-        if subtable.format == 14:
-            continue
-        if not (subtable.platformID == 0
-                or (subtable.platformID == 3 and subtable.platEncID in (1, 10))):
-            continue
-        for cp in targets:
-            subtable.cmap.pop(cp, None)
-    return len(targets)
+    cmaps = {key: font.getBestCmap() or {} for key, font in fonts.items()}
+    targets = {"A": set(), "B": set()}
+    for cp in cmaps["A"].keys() & cmaps["B"].keys():
+        owner = cjk_source if any(lo <= cp <= hi for lo, hi, _cat in CJK_RANGES) else base
+        targets["B" if owner == "A" else "A"].add(cp)
+    for key, cps in targets.items():
+        for subtable in fonts[key]["cmap"].tables:  # fitmerge의 서브테이블 순회 관례와 동일
+            if subtable.format == 14:
+                continue
+            if not (subtable.platformID == 0
+                    or (subtable.platformID == 3 and subtable.platEncID in (1, 10))):
+                continue
+            for cp in cps:
+                subtable.cmap.pop(cp, None)
+    return {key: len(cps) for key, cps in targets.items()}
 
 
 def merge_to_file(font_a, font_b, output, *, name: str = "MoeumMerged",
                   base: str = "A", upem: int | None = None, style: str = "Regular",
-                  cjk_source: str | None = None) -> Path:
+                  cjk_source: str | None = None, instance_a: dict | None = None,
+                  instance_b: dict | None = None) -> Path:
     """두 TTF를 병합해 output에 저장하고 경로를 돌려준다. 실패 시 MergeError.
 
     cjk_source가 base와 다르면 겹치는 CJK(CJK_RANGES)만 그 폰트가 가진다 —
-    None(기본)이면 base를 따르는 기존 동작.
+    None(기본)이면 base를 따르는 기존 동작. instance_a/b는 가변 폰트의 축 좌표
+    (resolve_instance — 가변이면 None이어도 기본값으로 고정, 정적이면 무시).
     """
-    paths = {"A": Path(font_a), "B": Path(font_b)}
+    paths = {"A": resolve_instance(font_a, instance_a), "B": resolve_instance(font_b, instance_b)}
     fonts = {key: load_ttf(path) for key, path in paths.items()}
 
     # 세로 조판 테이블(vhea/vmtx)이 한쪽에만 있으면 Merger가 속성 병합에서
@@ -277,14 +392,14 @@ def merge_to_file(font_a, font_b, output, *, name: str = "MoeumMerged",
     # base 폰트를 리스트 첫 번째로 — 겹치는 cmap에서 첫 번째가 이긴다
     order = ["A", "B"] if base == "A" else ["B", "A"]
 
-    # 겹치는 CJK만 cjk_source가 이기게: 지는 쪽(= base, 모든 걸 이기는 쪽)의 cmap에서
-    # 교집합 CJK를 미리 삭제해 Merger의 first-wins를 우회한다.
-    if cjk_source and cjk_source != base:
-        if cjk_source not in ("A", "B"):
-            raise MergeError(f"cjk_source는 A 또는 B여야 합니다: {cjk_source}")
-        removed = _strip_overlapping_cjk(loser=fonts[base], winner=fonts[cjk_source])
-        print(f"CJK 담당({cjk_source}): 겹치는 CJK {removed}자 — {base} cmap에서 제거",
-              file=sys.stderr)
+    # 겹치는 코드포인트는 담당 폰트의 cmap에만 남긴다 — 라틴 등은 base, CJK는 cjk_source.
+    # Merger의 first-wins(cmap)만 믿으면 합성 locl 때문에 셰이핑에서 뒤집힌다(_strip_overlaps).
+    cjk_owner = cjk_source or base
+    if cjk_owner not in ("A", "B"):
+        raise MergeError(f"cjk_source는 A 또는 B여야 합니다: {cjk_source}")
+    removed = _strip_overlaps(fonts, base=base, cjk_source=cjk_owner)
+    print(f"겹치는 코드포인트 정리 — A cmap {removed['A']}개 · B cmap {removed['B']}개 제거 "
+          f"(라틴 담당 {base}, CJK 담당 {cjk_owner})", file=sys.stderr)
 
     with tempfile.TemporaryDirectory() as tmp:
         merge_files = []
@@ -315,7 +430,7 @@ def merge_to_file(font_a, font_b, output, *, name: str = "MoeumMerged",
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="merge.py",
-        description="영문 폰트(A) + 한글 폰트(B)를 하나의 TTF로 병합한다. 입력은 TTF/정적 OTF(로드 시 TTF 변환), 출력은 항상 TTF.",
+        description="영문 폰트(A) + 한글 폰트(B)를 하나의 TTF로 병합한다. 입력은 TTF/OTF(로드 시 TTF 변환, 가변 폰트는 인스턴스로 고정), 출력은 항상 TTF.",
     )
     parser.add_argument("font_a", type=Path, help="폰트 A — 우선. 겹치는 글리프를 가짐 (보통 영문)")
     parser.add_argument("font_b", type=Path, help="폰트 B — 보충. A에 없는 글리프 담당 (보통 한글)")
@@ -331,6 +446,10 @@ def main(argv=None) -> int:
                         help="통일할 unitsPerEm (기본: 두 폰트 중 큰 값)")
     parser.add_argument("--style", choices=["Regular", "Bold", "Italic", "Bold Italic"], default="Regular",
                         help="출력 폰트 스타일 (기본: %(default)s)")
+    parser.add_argument("--instance-a", type=parse_location, default=None, metavar="TAG=VAL,...",
+                        help="A가 가변 폰트일 때 고정할 축 좌표, 예: wght=700 (기본: 축 기본값)")
+    parser.add_argument("--instance-b", type=parse_location, default=None, metavar="TAG=VAL,...",
+                        help="B가 가변 폰트일 때 고정할 축 좌표 (기본: 축 기본값)")
     args = parser.parse_args(argv)
 
     t0 = time.perf_counter()
@@ -338,7 +457,8 @@ def main(argv=None) -> int:
     try:
         merge_to_file(args.font_a, args.font_b, out_path,
                       name=args.name, base=args.base, upem=args.upem, style=args.style,
-                      cjk_source=args.cjk)
+                      cjk_source=args.cjk, instance_a=args.instance_a,
+                      instance_b=args.instance_b)
     except MergeError as e:
         print(f"오류: {e}", file=sys.stderr)
         return e.code

@@ -107,6 +107,22 @@
 
 ---
 
+## Phase 8 — fonttools 기능 선별 흡수 · 가변 폰트 · 글자 범위 · WOFF2
+
+> 동기: "fonttools CLI 전체를 GUI화" 검토 결과 **전부는 반대, 선별 흡수**. 기준은 ① 고르기→합치기→보기→저장 흐름 안에 들어가고 ② 미리보기가 의미 있고 ③ 안전한 기본값으로 옵션이 몇 개로 줄어드는 것. 탈락: ttx·feaLib·varLib build/mutator/interpolatable·designspace·mtiLib·voltLib·cffLib 변환·qu2cu(타입 디자이너용 파이프라인 — 이 앱 사용자와 불일치). 상세는 [REFERENCE.md](REFERENCE.md) 해당 절.
+
+- [x] **8a.** 실측 — 가변 TTF가 두 엔진에서 깨짐 확인(basic: GDEF VarStore 크래시 / mono: gvar 글리프 수 불일치로 다시 못 여는 파일을 "성공" 산출) → 가변 인스턴스를 최우선으로
+- [x] **8b.** `resolve_instance`(merge.py) — 가변이면 항상 정적 고정, 좌표별 파일 캐시(fitmerge B-분석 캐시 키 보존), 가변 OTF(CFF2)도 `downgradeCFF2` → otf2ttf. `load_ttf` 가드, CLI `--instance-a/-b`, 사이드카 `instance_a/b`·inspect `variable`, Rust `.inst-*` 청소, 슬롯 굵기 드롭다운(src/variable.ts). `test_instance.py` 픽스처가 옛 경로의 두 실패를 그대로 재현
+- [x] **8c.** WOFF2 저장 — brotli 의존성, 사이드카 `convert`, Rust `export_merged(path, format)`, 출력 섹션 TTF/WOFF2 세그먼트(캐시 키 무관)
+- [x] **8d.** 글자 범위 프리셋(`subset_presets.py`) — 전체/한자 제외/KS X 1001, ccmp 클로저 함정 대응, 사이드카 `subset` + stats, 상태줄 용량 표시, 미리보기 Adobe NotDef □ 폴백
+- [x] **8e.** 검증 — pytest 33 · vitest 44 · 번들 사이드카 스모크(convert/variable/subset 추가) · 실폰트 E2E(Jetendard 700 KS X 1001 → WOFF2 251KB) · headless Chrome UI 조작(invoke 목 → 실제 사이드카)
+- [x] **8g.** (기존 버그) 일반 모드 라틴 담당이 셰이핑에서 뒤집힘 — Merger 합성 locl이 B의 latn 스크립트에서 A 글리프를 B 글리프로 치환(Pretendard 등 GSUB 있는 B면 항상). `_strip_overlaps`로 겹치는 모든 코드포인트를 병합 전 담당 쪽 cmap에만 남겨 해결, `test_merge_overlap.py` 회귀 테스트(양방향)
+- [ ] **8f.** Windows 번들 스모크 — brotli·iup(C 확장)이 Windows PyInstaller 번들에도 들어가는지 CI(release.yml) 스모크로 확인
+
+**완료 기준:** 가변 폰트(JetBrainsMono[wght] + PretendardVariable)를 두 모드에서 굵기를 골라 병합하고, 글자 범위를 줄여 WOFF2로 저장할 수 있다.
+
+---
+
 ## Phase 5 — 오픈소스 릴리스
 
 - [ ] **5a.** 크로스플랫폼 빌드 — PyInstaller 사이드카 번들 (win/mac/linux) · (하루+)
